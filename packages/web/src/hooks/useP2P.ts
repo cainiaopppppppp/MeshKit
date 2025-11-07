@@ -12,6 +12,39 @@ import { useAppStore } from '../store';
 
 const SIGNALING_URL = `ws://${window.location.hostname}:8000`;
 
+// localStorage keys
+const STORAGE_KEYS = {
+  DEVICE_ID: 'meshkit_device_id',
+  DEVICE_NAME: 'meshkit_device_name',
+};
+
+/**
+ * 从 localStorage 获取持久化的设备信息
+ */
+function getPersistedDeviceInfo(): { deviceId?: string; deviceName?: string } {
+  try {
+    const deviceId = localStorage.getItem(STORAGE_KEYS.DEVICE_ID) || undefined;
+    const deviceName = localStorage.getItem(STORAGE_KEYS.DEVICE_NAME) || undefined;
+    return { deviceId, deviceName };
+  } catch (error) {
+    console.warn('[useP2P] Failed to read from localStorage:', error);
+    return {};
+  }
+}
+
+/**
+ * 持久化设备信息到 localStorage
+ */
+function persistDeviceInfo(deviceId: string, deviceName: string): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.DEVICE_ID, deviceId);
+    localStorage.setItem(STORAGE_KEYS.DEVICE_NAME, deviceName);
+    console.log('[useP2P] Device info persisted:', { deviceId, deviceName });
+  } catch (error) {
+    console.warn('[useP2P] Failed to persist device info:', error);
+  }
+}
+
 export function useP2P() {
   const {
     setConnected,
@@ -21,13 +54,28 @@ export function useP2P() {
     setTransferProgress,
     setDownload,
     reset,
+    isTransferring,
   } = useAppStore();
 
   useEffect(() => {
     // 初始化
     const initialize = async () => {
       try {
-        const { deviceId, deviceName } = await initCore();
+        // 尝试从 localStorage 读取已保存的设备信息
+        const persisted = getPersistedDeviceInfo();
+        console.log('[useP2P] Persisted device info:', persisted);
+
+        // 初始化核心模块（如果有持久化的信息就使用它）
+        const { deviceId, deviceName } = await initCore(
+          persisted.deviceId,
+          persisted.deviceName
+        );
+
+        // 如果是新生成的设备信息，保存到 localStorage
+        if (!persisted.deviceId || !persisted.deviceName) {
+          persistDeviceInfo(deviceId, deviceName);
+        }
+
         setMyDevice(deviceId, deviceName);
 
         // 连接信令服务器
@@ -47,6 +95,24 @@ export function useP2P() {
       unsubscribe();
     };
   }, [setConnected, setMyDevice, setDevices, setTransferring, setTransferProgress, setDownload, reset]);
+
+  // 防止传输过程中刷新页面
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isTransferring) {
+        e.preventDefault();
+        // Chrome 需要设置 returnValue
+        e.returnValue = '文件正在传输中，确定要离开吗？传输将会中断。';
+        return e.returnValue;
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [isTransferring]);
 
   function setupEventListeners() {
     // 信令连接
