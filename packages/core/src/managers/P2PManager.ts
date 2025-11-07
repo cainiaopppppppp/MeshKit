@@ -1,0 +1,246 @@
+/**
+ * P2PManager - P2P连接管理器
+ * 管理所有WebRTC P2P连接的生命周期
+ */
+import type Peer from 'peerjs';
+import type { DataConnection } from 'peerjs';
+import { eventBus } from '../utils/EventBus';
+import { config } from '../utils/Config';
+
+// 动态导入PeerJS（处理不同环境）
+let PeerJS: typeof Peer | null = null;
+
+export class P2PManager {
+  private peer: Peer | null = null;
+  private myDeviceId: string | null = null;
+  private connections: Map<string, DataConnection> = new Map();
+  private isInitialized: boolean = false;
+
+  /**
+   * 初始化P2P管理器
+   */
+  async init(deviceId: string): Promise<void> {
+    if (this.isInitialized) {
+      console.warn('[P2PManager] Already initialized');
+      return;
+    }
+
+    this.myDeviceId = deviceId;
+
+    try {
+      // 加载PeerJS
+      await this.loadPeerJS();
+
+      if (!PeerJS) {
+        throw new Error('Failed to load PeerJS');
+      }
+
+      // 创建Peer实例
+      const webrtcConfig = config.get('webrtc');
+      this.peer = new PeerJS(deviceId, {
+        config: webrtcConfig.config as RTCConfiguration,
+      });
+
+      // 设置事件监听
+      this.setupPeerEvents();
+
+      this.isInitialized = true;
+      eventBus.emit('p2p:initialized', { deviceId });
+    } catch (error) {
+      console.error('[P2PManager] Initialization failed:', error);
+      eventBus.emit('p2p:connection:error', {
+        peer: deviceId,
+        error: error as Error,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * 动态加载PeerJS
+   */
+  private async loadPeerJS(): Promise<void> {
+    if (PeerJS) return;
+
+    try {
+      // 尝试从全局加载（浏览器环境）
+      if (typeof window !== 'undefined' && (window as any).Peer) {
+        PeerJS = (window as any).Peer;
+        return;
+      }
+
+      // 尝试从npm包加载
+      const module = await import('peerjs');
+      PeerJS = module.default || module;
+    } catch (error) {
+      console.error('[P2PManager] Failed to load PeerJS:', error);
+      throw new Error('PeerJS not available');
+    }
+  }
+
+  /**
+   * 设置Peer事件监听
+   */
+  private setupPeerEvents(): void {
+    if (!this.peer) return;
+
+    this.peer.on('open', (id: string) => {
+      console.log('[P2PManager] Peer opened with ID:', id);
+      eventBus.emit('p2p:ready', { deviceId: id });
+    });
+
+    this.peer.on('connection', (conn: DataConnection) => {
+      console.log('[P2PManager] Incoming connection from:', conn.peer);
+      this.handleIncomingConnection(conn);
+    });
+
+    this.peer.on('error', (error: Error) => {
+      console.error('[P2PManager] Peer error:', error);
+      eventBus.emit('p2p:connection:error', {
+        peer: this.myDeviceId || 'unknown',
+        error,
+      });
+    });
+
+    this.peer.on('disconnected', () => {
+      console.warn('[P2PManager] Peer disconnected');
+      // 尝试重连
+      if (this.peer && !this.peer.destroyed) {
+        this.peer.reconnect();
+      }
+    });
+
+    this.peer.on('close', () => {
+      console.log('[P2PManager] Peer closed');
+    });
+  }
+
+  /**
+   * 连接到远程设备
+   */
+  connect(targetDeviceId: string, metadata?: any): DataConnection {
+    if (!this.isInitialized || !this.peer) {
+      throw new Error('P2PManager not initialized');
+    }
+
+    console.log(`[P2PManager] Connecting to ${targetDeviceId}...`);
+
+    // 配置数据连接选项
+    const conn = this.peer.connect(targetDeviceId, {
+      reliable: true,
+      serialization: 'binary', // 使用二进制序列化，而非JSON（关键！）
+      metadata,
+    });
+
+    this.setupConnectionEvents(conn, 'outgoing');
+
+    return conn;
+  }
+
+  /**
+   * 处理传入连接
+   */
+  private handleIncomingConnection(conn: DataConnection): void {
+    this.setupConnectionEvents(conn, 'incoming');
+  }
+
+  /**
+   * 设置连接事件监听
+   */
+  private setupConnectionEvents(
+    conn: DataConnection,
+    direction: 'incoming' | 'outgoing'
+  ): void {
+    const connectionId = `${direction}-${conn.peer}`;
+    this.connections.set(connectionId, conn);
+
+    conn.on('open', () => {
+      console.log(`[P2PManager] Connection opened: ${connectionId}`);
+      eventBus.emit('p2p:connection:open', {
+        peer: conn.peer,
+        direction,
+      });
+    });
+
+    conn.on('data', (data: any) => {
+      eventBus.emit('p2p:connection:data', {
+        peer: conn.peer,
+        data,
+      });
+    });
+
+    conn.on('close', () => {
+      console.log(`[P2PManager] Connection closed: ${connectionId}`);
+      this.connections.delete(connectionId);
+      eventBus.emit('p2p:connection:close', {
+        peer: conn.peer,
+      });
+    });
+
+    conn.on('error', (error: Error) => {
+      console.error(`[P2PManager] Connection error: ${connectionId}`, error);
+      eventBus.emit('p2p:connection:error', {
+        peer: conn.peer,
+        error,
+      });
+    });
+  }
+
+  /**
+   * 获取连接
+   */
+  getConnection(peerId: string, direction: 'incoming' | 'outgoing'): DataConnection | undefined {
+    const connectionId = `${direction}-${peerId}`;
+    return this.connections.get(connectionId);
+  }
+
+  /**
+   * 关闭指定连接
+   */
+  closeConnection(peerId: string, direction: 'incoming' | 'outgoing'): void {
+    const connectionId = `${direction}-${peerId}`;
+    const conn = this.connections.get(connectionId);
+    if (conn) {
+      conn.close();
+      this.connections.delete(connectionId);
+    }
+  }
+
+  /**
+   * 关闭所有连接
+   */
+  closeAllConnections(): void {
+    this.connections.forEach((conn) => conn.close());
+    this.connections.clear();
+  }
+
+  /**
+   * 销毁P2P管理器
+   */
+  destroy(): void {
+    this.closeAllConnections();
+
+    if (this.peer) {
+      this.peer.destroy();
+      this.peer = null;
+    }
+
+    this.isInitialized = false;
+  }
+
+  /**
+   * 获取连接状态
+   */
+  getStatus() {
+    return {
+      initialized: this.isInitialized,
+      deviceId: this.myDeviceId,
+      peerReady: this.peer && !this.peer.destroyed,
+      activeConnections: this.connections.size,
+      connections: Array.from(this.connections.keys()),
+    };
+  }
+}
+
+// 导出单例
+export const p2pManager = new P2PManager();

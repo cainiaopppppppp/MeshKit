@@ -1,0 +1,45 @@
+{
+  "name": "meshkit-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MeshKit - 局域网协作工具套件 Monorepo",
+  "scripts": {
+    "dev": "turbo run dev",
+    "dev:web": "pnpm --filter web dev",
+    "dev:desktop": "pnpm --filter desktop dev",
+    "dev:mobile": "pnpm --filter mobile start",
+    "dev:signaling": "pnpm --filter signaling dev",
+    "build": "turbo run build",
+    "build:web": "pnpm --filter web build",
+    "build:desktop": "pnpm --filter desktop build",
+    "build:mobile": "pnpm --filter mobile build",
+    "type-check": "turbo run type-check",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "keywords": [
+    "meshkit",
+    "meshdrop",
+    "file-transfer",
+    "webrtc",
+    "p2p",
+    "lan",
+    "mesh-network",
+    "collaboration",
+    "react",
+    "electron",
+    "react-native"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "turbo": "^1.11.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@8.15.0"
+}

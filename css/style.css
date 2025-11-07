@@ -1,0 +1,631 @@
+/**
+ * P2P局域网传输 - 样式文件
+ * 模块化、响应式设计
+ */
+
+/* ========== 基础样式 ========== */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: 100vh;
+  padding: 20px;
+  line-height: 1.6;
+  /* iOS安全区域适配 */
+  padding-top: max(20px, env(safe-area-inset-top));
+  padding-bottom: max(20px, env(safe-area-inset-bottom));
+  padding-left: max(20px, env(safe-area-inset-left));
+  padding-right: max(20px, env(safe-area-inset-right));
+  /* 禁止选择和长按菜单（移动端优化） */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  /* 禁止文字放大（iOS） */
+  -webkit-text-size-adjust: 100%;
+}
+
+/* ========== 容器 ========== */
+.container {
+  max-width: 600px;
+  margin: 0 auto;
+  background: white;
+  border-radius: 20px;
+  padding: 30px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+/* ========== 标题 ========== */
+h1 {
+  text-align: center;
+  color: #333;
+  margin-bottom: 10px;
+  font-size: 32px;
+  font-weight: 700;
+}
+
+.subtitle {
+  text-align: center;
+  color: #666;
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+
+/* ========== 连接状态 ========== */
+.connection-status {
+  text-align: center;
+  padding: 12px;
+  border-radius: 10px;
+  margin-bottom: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.3s ease;
+}
+
+.connection-status.connected {
+  background: #e8f5e9;
+  color: #388e3c;
+}
+
+.connection-status.disconnected {
+  background: #ffebee;
+  color: #d32f2f;
+}
+
+/* ========== 设备名称输入 ========== */
+.device-name {
+  margin-bottom: 20px;
+}
+
+.device-name input {
+  width: 100%;
+  padding: 15px;
+  border: 2px solid #e0e0e0;
+  border-radius: 10px;
+  font-size: 16px;
+  transition: border-color 0.3s ease;
+}
+
+.device-name input:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+/* ========== 模式切换标签 ========== */
+.mode-tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 30px;
+  background: #f5f5f5;
+  padding: 5px;
+  border-radius: 12px;
+}
+
+.mode-tab {
+  flex: 1;
+  padding: 12px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 600;
+  color: #666;
+  transition: all 0.3s ease;
+}
+
+.mode-tab:hover {
+  background: rgba(102, 126, 234, 0.1);
+}
+
+.mode-tab.active {
+  background: white;
+  color: #667eea;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* ========== 面板 ========== */
+.panel {
+  display: none;
+}
+
+.panel.active {
+  display: block;
+}
+
+/* ========== 文件选择区域 ========== */
+.file-input-wrapper {
+  border: 3px dashed #ddd;
+  border-radius: 15px;
+  padding: 40px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  margin-bottom: 20px;
+  background: #fafafa;
+}
+
+.file-input-wrapper:hover {
+  border-color: #667eea;
+  background: #f9f9ff;
+  transform: translateY(-2px);
+}
+
+.file-input-wrapper:active {
+  transform: translateY(0);
+}
+
+.file-input-wrapper.drag-over {
+  border-color: #4caf50;
+  background: #e8f5e9;
+  transform: scale(1.02);
+}
+
+/* ========== 文件信息 ========== */
+.file-info {
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  padding: 20px;
+  border-radius: 12px;
+  margin-bottom: 20px;
+  display: none;
+  border-left: 4px solid #667eea;
+}
+
+.file-info-header {
+  font-size: 16px;
+  font-weight: 700;
+  color: #333;
+  margin-bottom: 12px;
+}
+
+.file-info p {
+  margin: 8px 0;
+  color: #555;
+  font-size: 14px;
+}
+
+.file-info strong {
+  color: #333;
+}
+
+/* ========== 设备列表 ========== */
+.devices-section {
+  margin: 20px 0;
+}
+
+.devices-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 15px;
+}
+
+.devices-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.device-item {
+  background: white;
+  border: 2px solid #e0e0e0;
+  border-radius: 12px;
+  padding: 15px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.device-item:hover {
+  border-color: #667eea;
+  transform: translateX(5px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+}
+
+.device-item.selected {
+  border-color: #667eea;
+  background: linear-gradient(135deg, #f0f0ff 0%, #e8e8ff 100%);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.device-icon {
+  font-size: 32px;
+}
+
+.device-info {
+  flex: 1;
+}
+
+.device-name-text {
+  font-weight: 600;
+  color: #333;
+  font-size: 16px;
+}
+
+/* ========== 按钮 ========== */
+.btn {
+  width: 100%;
+  padding: 15px;
+  border: none;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  margin-top: 10px;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-download {
+  background: linear-gradient(135deg, #4caf50, #45a049);
+  color: white;
+  font-size: 18px;
+  padding: 20px;
+  animation: pulse 2s infinite;
+}
+
+.btn-download:hover {
+  transform: scale(1.05);
+  box-shadow: 0 8px 20px rgba(76, 175, 80, 0.4);
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+/* ========== 进度条 ========== */
+.progress-bar {
+  width: 100%;
+  height: 12px;
+  background: #f0f0f0;
+  border-radius: 6px;
+  margin: 15px 0;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #667eea, #764ba2);
+  width: 0%;
+  transition: width 0.3s ease;
+  border-radius: 6px;
+}
+
+/* ========== 速度信息 ========== */
+.speed-info {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  color: #666;
+  margin-top: 10px;
+  padding: 10px 5px;
+}
+
+.speed-info span {
+  font-weight: 500;
+}
+
+/* ========== 状态消息 ========== */
+.status {
+  padding: 15px;
+  border-radius: 10px;
+  margin: 15px 0;
+  text-align: center;
+  font-weight: 500;
+  animation: fadeIn 0.3s ease;
+}
+
+.status.info {
+  background: #e3f2fd;
+  color: #1976d2;
+  border-left: 4px solid #1976d2;
+}
+
+.status.success {
+  background: #e8f5e9;
+  color: #388e3c;
+  border-left: 4px solid #388e3c;
+}
+
+.status.error {
+  background: #ffebee;
+  color: #d32f2f;
+  border-left: 4px solid #d32f2f;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ========== 下载卡片 ========== */
+.download-ready {
+  background: linear-gradient(135deg, #4caf50, #45a049);
+  color: white;
+  padding: 30px;
+  border-radius: 15px;
+  text-align: center;
+  margin: 20px 0;
+  box-shadow: 0 8px 24px rgba(76, 175, 80, 0.3);
+  animation: slideIn 0.5s ease;
+}
+
+.download-ready h2 {
+  font-size: 24px;
+  margin-bottom: 15px;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ========== 空状态 ========== */
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: #999;
+}
+
+/* ========== 页脚 ========== */
+.footer {
+  margin-top: 30px;
+  padding-top: 20px;
+  border-top: 1px solid #e0e0e0;
+  text-align: center;
+  color: #999;
+  font-size: 12px;
+}
+
+/* ========== Toast通知 ========== */
+.toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: 15px 20px;
+  border-radius: 10px;
+  color: white;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  opacity: 0;
+  transform: translateX(100%);
+  transition: all 0.3s ease;
+  z-index: 1000;
+  max-width: 300px;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.toast-info {
+  background: #2196f3;
+}
+
+.toast-success {
+  background: #4caf50;
+}
+
+.toast-error {
+  background: #f44336;
+}
+
+.toast-warning {
+  background: #ff9800;
+}
+
+/* ========== 对话框 ========== */
+.dialog-overlay,
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.dialog-overlay.show,
+.modal-overlay.show {
+  opacity: 1;
+}
+
+.dialog,
+.modal {
+  background: white;
+  border-radius: 15px;
+  padding: 30px;
+  max-width: 400px;
+  width: 90%;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  transform: scale(0.9);
+  transition: transform 0.3s ease;
+}
+
+.dialog-overlay.show .dialog,
+.modal-overlay.show .modal {
+  transform: scale(1);
+}
+
+.dialog h3,
+.modal-header h3 {
+  margin-bottom: 15px;
+  color: #333;
+  font-size: 20px;
+}
+
+.dialog p {
+  margin-bottom: 20px;
+  color: #666;
+}
+
+.dialog-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.btn-secondary {
+  background: #e0e0e0;
+  color: #333;
+}
+
+.btn-secondary:hover {
+  background: #d0d0d0;
+}
+
+/* ========== 响应式设计 ========== */
+@media (max-width: 600px) {
+  body {
+    padding: 10px;
+  }
+
+  .container {
+    padding: 20px;
+    margin: 0;
+    border-radius: 15px;
+  }
+
+  h1 {
+    font-size: 24px;
+  }
+
+  .file-input-wrapper {
+    padding: 30px 20px;
+  }
+
+  .device-item {
+    padding: 12px;
+  }
+
+  .toast {
+    right: 10px;
+    left: 10px;
+    max-width: none;
+  }
+}
+
+/* iPad和平板优化 */
+@media (min-width: 601px) and (max-width: 1024px) {
+  .container {
+    max-width: 700px;
+  }
+}
+
+/* 触摸设备优化 */
+@media (hover: none) and (pointer: coarse) {
+  .btn,
+  .device-item,
+  .mode-tab {
+    min-height: 44px; /* iOS最小点击区域 */
+  }
+
+  .file-input-wrapper {
+    min-height: 150px;
+  }
+}
+
+/* ========== 滚动条样式 ========== */
+.devices-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.devices-list::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+.devices-list::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 4px;
+}
+
+.devices-list::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* ========== 加载动画 ========== */
+.loading-spinner {
+  text-align: center;
+  padding: 20px;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  margin: 0 auto 10px;
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #667eea;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* ========== 可访问性 ========== */
+.btn:focus,
+input:focus {
+  outline: 2px solid #667eea;
+  outline-offset: 2px;
+}
+
+/* ========== 打印样式 ========== */
+@media print {
+  body {
+    background: white;
+  }
+
+  .container {
+    box-shadow: none;
+  }
+}

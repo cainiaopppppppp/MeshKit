@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="局域网快传">
+  <meta name="theme-color" content="#667eea">
+  <meta name="description" content="基于WebRTC的P2P局域网文件传输，支持iOS、Android、Mac等全平台">
+
+  <!-- iOS图标 -->
+  <link rel="apple-touch-icon" sizes="180x180" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23667eea' width='100' height='100' rx='20'/><text x='50' y='70' text-anchor='middle' font-size='60' fill='white'>⚡</text></svg>">
+
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="manifest.json">
+
+  <title>局域网快传 - P2P文件传输</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>⚡ 局域网快传</h1>
+    <p class="subtitle">同WiFi极速传输 · 模块化架构</p>
+
+    <!-- 连接状态 -->
+    <div id="connectionStatus" class="connection-status disconnected">
+      ⚠️ 未连接到服务器
+    </div>
+
+    <!-- 设备名称 -->
+    <div class="device-name">
+      <input
+        type="text"
+        id="deviceName"
+        placeholder="设备名称"
+        maxlength="30"
+      >
+    </div>
+
+    <!-- 模式切换 -->
+    <div class="mode-tabs">
+      <button class="mode-tab active" data-mode="send">📤 发送</button>
+      <button class="mode-tab" data-mode="receive">📥 接收</button>
+    </div>
+
+    <!-- 发送面板 -->
+    <div id="send-panel" class="panel active">
+      <!-- 文件选择 -->
+      <div class="file-input-wrapper" id="fileInputWrapper">
+        <div style="font-size: 64px; margin-bottom: 10px;">📁</div>
+        <p style="font-size: 18px; font-weight: 600;">选择文件</p>
+        <p style="font-size: 14px; color: #999; margin-top: 5px;">点击或拖拽文件到此处</p>
+        <input type="file" id="fileInput" style="display: none;">
+      </div>
+
+      <!-- 文件信息 -->
+      <div id="fileInfo" class="file-info">
+        <div class="file-info-header">📄 已选择文件</div>
+        <p><strong>文件名:</strong> <span id="fileName"></span></p>
+        <p><strong>大小:</strong> <span id="fileSize"></span></p>
+      </div>
+
+      <!-- 设备列表 -->
+      <div class="devices-section">
+        <div class="devices-title">📱 附近的设备</div>
+        <div id="devicesList" class="devices-list"></div>
+      </div>
+
+      <!-- 发送按钮 -->
+      <button class="btn btn-primary" id="sendBtn" disabled>
+        📤 发送文件
+      </button>
+
+      <!-- 发送进度 -->
+      <div id="sendProgress" class="progress-bar" style="display: none;">
+        <div class="progress-fill" id="sendProgressBar"></div>
+      </div>
+      <div id="sendSpeedInfo" class="speed-info" style="display: none;">
+        <span id="sendSpeed">速度: 0 MB/s</span>
+        <span id="sendTime">剩余: 计算中...</span>
+      </div>
+
+      <!-- 发送状态 -->
+      <div id="sendStatus" class="status" style="display: none;"></div>
+    </div>
+
+    <!-- 接收面板 -->
+    <div id="receive-panel" class="panel">
+      <!-- 等待状态 -->
+      <div class="empty-state" id="waitingState">
+        <div style="font-size: 64px; margin-bottom: 15px;">📱</div>
+        <p style="font-size: 18px; font-weight: 600; color: #333; margin-bottom: 10px;">
+          等待接收文件
+        </p>
+        <p style="font-size: 14px; color: #666;">设备已在线，等待其他设备发送文件</p>
+      </div>
+
+      <!-- 接收进度 -->
+      <div id="receiveProgress" class="progress-bar" style="display: none;">
+        <div class="progress-fill" id="receiveProgressBar"></div>
+      </div>
+      <div id="receiveSpeedInfo" class="speed-info" style="display: none;">
+        <span id="receiveSpeed">速度: 0 MB/s</span>
+        <span id="receiveTime">剩余: 计算中...</span>
+      </div>
+
+      <!-- 下载准备 -->
+      <div id="downloadReady" class="download-ready" style="display: none;">
+        <h2>✅ 文件接收完成！</h2>
+        <p class="download-filename" style="font-size: 16px; font-weight: 600; margin: 10px 0;"></p>
+        <p class="download-filesize" style="font-size: 14px; color: rgba(255,255,255,0.9); margin-bottom: 20px;"></p>
+        <button class="btn btn-download" id="downloadBtn">
+          ⬇️ 点击下载文件
+        </button>
+        <p style="font-size: 12px; margin-top: 15px; opacity: 0.8;">
+          请点击按钮下载文件
+        </p>
+      </div>
+
+      <!-- 接收状态 -->
+      <div id="receiveStatus" class="status" style="display: none;"></div>
+    </div>
+
+    <!-- 页脚 -->
+    <div class="footer">
+      <p>💻 ↔️ 📱 局域网直连 · ⚡ 模块化架构</p>
+      <p style="font-size: 11px; margin-top: 5px; opacity: 0.7;">
+        基于WebRTC · 安全高效
+      </p>
+    </div>
+  </div>
+
+  <!-- 加载PeerJS -->
+  <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
+
+  <!-- 加载应用 -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

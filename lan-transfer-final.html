@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>局域网快传 - 优化版</title>
+  
+  <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
+  
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 20px;
+      padding: 30px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+
+    h1 {
+      text-align: center;
+      color: #333;
+      margin-bottom: 10px;
+      font-size: 32px;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #666;
+      margin-bottom: 20px;
+      font-size: 14px;
+    }
+
+    .connection-status {
+      text-align: center;
+      padding: 12px;
+      border-radius: 10px;
+      margin-bottom: 20px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .connection-status.connected {
+      background: #e8f5e9;
+      color: #388e3c;
+    }
+
+    .connection-status.disconnected {
+      background: #ffebee;
+      color: #d32f2f;
+    }
+
+    .device-name {
+      margin-bottom: 20px;
+    }
+
+    .device-name input {
+      width: 100%;
+      padding: 15px;
+      border: 2px solid #e0e0e0;
+      border-radius: 10px;
+      font-size: 16px;
+    }
+
+    .mode-tabs {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 30px;
+      background: #f5f5f5;
+      padding: 5px;
+      border-radius: 12px;
+    }
+
+    .mode-tab {
+      flex: 1;
+      padding: 12px;
+      border: none;
+      background: transparent;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: 600;
+      color: #666;
+    }
+
+    .mode-tab.active {
+      background: white;
+      color: #667eea;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .panel {
+      display: none;
+    }
+
+    .panel.active {
+      display: block;
+    }
+
+    .file-input-wrapper {
+      border: 3px dashed #ddd;
+      border-radius: 15px;
+      padding: 40px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s;
+      margin-bottom: 20px;
+    }
+
+    .file-input-wrapper:hover {
+      border-color: #667eea;
+      background: #f9f9ff;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    .file-info {
+      background: #f9f9f9;
+      padding: 15px;
+      border-radius: 10px;
+      margin-bottom: 20px;
+      display: none;
+    }
+
+    .devices-list {
+      margin-top: 20px;
+    }
+
+    .devices-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 15px;
+    }
+
+    .device-item {
+      background: white;
+      border: 2px solid #e0e0e0;
+      border-radius: 12px;
+      padding: 15px;
+      margin-bottom: 10px;
+      cursor: pointer;
+      transition: all 0.3s;
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+
+    .device-item:hover {
+      border-color: #667eea;
+      transform: translateY(-2px);
+    }
+
+    .device-item.selected {
+      border-color: #667eea;
+      background: #f0f0ff;
+    }
+
+    .device-icon {
+      font-size: 32px;
+    }
+
+    .device-info {
+      flex: 1;
+    }
+
+    .device-name-text {
+      font-weight: 600;
+      color: #333;
+      font-size: 16px;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 15px;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: white;
+      transition: all 0.3s;
+      margin-top: 10px;
+    }
+
+    .btn:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-download {
+      background: #4caf50;
+      font-size: 18px;
+      padding: 20px;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% {
+        transform: scale(1);
+      }
+      50% {
+        transform: scale(1.05);
+      }
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 12px;
+      background: #f0f0f0;
+      border-radius: 6px;
+      margin: 15px 0;
+      overflow: hidden;
+      display: none;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #667eea, #764ba2);
+      width: 0%;
+      transition: width 0.3s;
+    }
+
+    .speed-info {
+      display: flex;
+      justify-content: space-between;
+      font-size: 14px;
+      color: #666;
+      margin-top: 10px;
+      display: none;
+    }
+
+    .status {
+      padding: 15px;
+      border-radius: 10px;
+      margin: 15px 0;
+      text-align: center;
+      display: none;
+    }
+
+    .status.info {
+      background: #e3f2fd;
+      color: #1976d2;
+    }
+
+    .status.success {
+      background: #e8f5e9;
+      color: #388e3c;
+    }
+
+    .status.error {
+      background: #ffebee;
+      color: #d32f2f;
+    }
+
+    .download-ready {
+      background: linear-gradient(135deg, #4caf50, #45a049);
+      color: white;
+      padding: 30px;
+      border-radius: 15px;
+      text-align: center;
+      margin: 20px 0;
+      display: none;
+    }
+
+    .download-ready h2 {
+      font-size: 24px;
+      margin-bottom: 15px;
+    }
+
+    .download-ready p {
+      margin: 10px 0;
+      opacity: 0.9;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: #999;
+    }
+
+    .footer {
+      margin-top: 30px;
+      text-align: center;
+      color: #999;
+      font-size: 12px;
+    }
+
+    @media (max-width: 600px) {
+      .container {
+        padding: 20px;
+      }
+      h1 {
+        font-size: 24px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>⚡ 局域网快传</h1>
+    <p class="subtitle">同WiFi极速传输 · 优化版</p>
+
+    <div id="connectionStatus" class="connection-status disconnected">
+      ⚠️ 未连接到服务器
+    </div>
+
+    <div class="device-name">
+      <input 
+        type="text" 
+        id="deviceName" 
+        placeholder="设备名称"
+      >
+    </div>
+
+    <div class="mode-tabs">
+      <button class="mode-tab active" onclick="switchMode('send')">📤 发送</button>
+      <button class="mode-tab" onclick="switchMode('receive')">📥 接收</button>
+    </div>
+
+    <!-- 发送面板 -->
+    <div id="send-panel" class="panel active">
+      <div class="file-input-wrapper" onclick="document.getElementById('fileInput').click()">
+        <div style="font-size: 64px; margin-bottom: 10px;">📁</div>
+        <p style="font-size: 18px; font-weight: 600;">选择文件</p>
+        <input type="file" id="fileInput" onchange="handleFileSelect(event)">
+      </div>
+
+      <div id="fileInfo" class="file-info">
+        <p><strong>文件:</strong> <span id="fileName"></span></p>
+        <p><strong>大小:</strong> <span id="fileSize"></span></p>
+      </div>
+
+      <div class="devices-list">
+        <div class="devices-title">📱 附近的设备</div>
+        <div id="devicesList"></div>
+      </div>
+
+      <button class="btn" id="sendBtn" onclick="sendFile()" disabled>
+        📤 发送文件
+      </button>
+
+      <div id="sendProgress" class="progress-bar">
+        <div class="progress-fill" id="sendProgressBar"></div>
+      </div>
+      <div id="sendSpeedInfo" class="speed-info">
+        <span id="sendSpeed">速度: 0 MB/s</span>
+        <span id="sendTime">剩余: 计算中...</span>
+      </div>
+      <div id="sendStatus" class="status"></div>
+    </div>
+
+    <!-- 接收面板 -->
+    <div id="receive-panel" class="panel">
+      <div class="empty-state" id="waitingState">
+        <div style="font-size: 64px; margin-bottom: 15px;">📱</div>
+        <p style="font-size: 18px; font-weight: 600; color: #333; margin-bottom: 10px;">
+          等待接收文件
+        </p>
+        <p style="font-size: 14px;">设备已在线</p>
+      </div>
+
+      <div id="receiveProgress" class="progress-bar">
+        <div class="progress-fill" id="receiveProgressBar"></div>
+      </div>
+      <div id="receiveSpeedInfo" class="speed-info">
+        <span id="receiveSpeed">速度: 0 MB/s</span>
+        <span id="receiveTime">剩余: 计算中...</span>
+      </div>
+
+      <!-- 下载准备提示 -->
+      <div id="downloadReady" class="download-ready">
+        <h2>✅ 文件接收完成！</h2>
+        <p id="downloadFileName" style="font-size: 16px; font-weight: 600;">文件名</p>
+        <p id="downloadFileSize" style="font-size: 14px;">大小</p>
+        <button class="btn btn-download" onclick="triggerDownload()">
+          ⬇️ 点击下载文件
+        </button>
+        <p style="font-size: 12px; margin-top: 15px; opacity: 0.8;">
+          请点击按钮下载文件到手机
+        </p>
+      </div>
+
+      <div id="receiveStatus" class="status"></div>
+    </div>
+
+    <div class="footer">
+      <p>💻 ↔️ 📱 局域网直连 · ⚡ 极速优化</p>
+    </div>
+  </div>
+
+  <script>
+    let ws = null;
+    let peer = null;
+    let myDeviceId = null;
+    let myDeviceName = '';
+    let selectedFile = null;
+    let selectedDeviceId = null;
+    let nearbyDevices = new Map();
+    let downloadBlob = null;
+    let downloadFilename = '';
+    
+    // 性能优化：更大的分块，更少的延迟
+    const CHUNK_SIZE = 256 * 1024; // 256KB (从16KB增加到256KB)
+    const SEND_DELAY = 0; // 不等待 (从10ms改为0ms)
+    
+    // 速度统计
+    let transferStartTime = 0;
+    let transferredBytes = 0;
+
+    // 初始化
+    window.onload = function() {
+      myDeviceId = 'device-' + Math.random().toString(36).substr(2, 9);
+      const deviceType = /Mobile|Android|iPhone|iPad/i.test(navigator.userAgent) ? '📱手机' : '💻电脑';
+      myDeviceName = `${deviceType}-${myDeviceId.substr(-4).toUpperCase()}`;
+      document.getElementById('deviceName').value = myDeviceName;
+
+      connectSignalingServer();
+      initPeer();
+    };
+
+    // 连接信令服务器
+    function connectSignalingServer() {
+      const wsUrl = `ws://${window.location.hostname}:${window.location.port}`;
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        console.log('✅ 已连接到服务器');
+        updateConnectionStatus(true);
+        
+        ws.send(JSON.stringify({
+          type: 'register',
+          deviceId: myDeviceId,
+          deviceName: myDeviceName
+        }));
+
+        setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'heartbeat' }));
+          }
+        }, 3000);
+      };
+
+      ws.onmessage = (event) => {
+        const message = JSON.parse(event.data);
+        handleSignalingMessage(message);
+      };
+
+      ws.onclose = () => {
+        console.log('❌ 服务器连接断开');
+        updateConnectionStatus(false);
+        setTimeout(connectSignalingServer, 3000);
+      };
+    }
+
+    function updateConnectionStatus(connected) {
+      const status = document.getElementById('connectionStatus');
+      if (connected) {
+        status.className = 'connection-status connected';
+        status.textContent = '✅ 已连接';
+      } else {
+        status.className = 'connection-status disconnected';
+        status.textContent = '⚠️ 未连接';
+      }
+    }
+
+    function handleSignalingMessage(message) {
+      if (message.type === 'device-list') {
+        updateDeviceList(message.devices);
+      }
+    }
+
+    function updateDeviceList(devices) {
+      nearbyDevices.clear();
+      devices.forEach(device => {
+        if (device.id !== myDeviceId) {
+          nearbyDevices.set(device.id, device);
+        }
+      });
+      renderDeviceList();
+    }
+
+    function renderDeviceList() {
+      const devicesList = document.getElementById('devicesList');
+      
+      if (nearbyDevices.size === 0) {
+        devicesList.innerHTML = `
+          <div class="empty-state">
+            <p style="font-size: 14px; color: #999;">
+              未发现其他设备<br>
+              请确保其他设备也打开了此页面
+            </p>
+          </div>
+        `;
+        return;
+      }
+
+      devicesList.innerHTML = '';
+      nearbyDevices.forEach((device, id) => {
+        const deviceEl = document.createElement('div');
+        deviceEl.className = 'device-item';
+        if (selectedDeviceId === id) {
+          deviceEl.classList.add('selected');
+        }
+        
+        const icon = device.name.includes('📱') ? '📱' : '💻';
+        
+        deviceEl.innerHTML = `
+          <div class="device-icon">${icon}</div>
+          <div class="device-info">
+            <div class="device-name-text">${device.name}</div>
+          </div>
+        `;
+        
+        deviceEl.onclick = () => selectDevice(id);
+        devicesList.appendChild(deviceEl);
+      });
+    }
+
+    function selectDevice(deviceId) {
+      selectedDeviceId = deviceId;
+      renderDeviceList();
+      document.getElementById('sendBtn').disabled = !selectedFile || !selectedDeviceId;
+    }
+
+    function initPeer() {
+      peer = new Peer(myDeviceId, {
+        config: {
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        }
+      });
+
+      peer.on('connection', (conn) => {
+        setupReceiver(conn);
+      });
+    }
+
+    function switchMode(mode) {
+      document.querySelectorAll('.mode-tab').forEach(btn => {
+        btn.classList.remove('active');
+      });
+      event.target.classList.add('active');
+
+      document.querySelectorAll('.panel').forEach(panel => {
+        panel.classList.remove('active');
+      });
+      document.getElementById(`${mode}-panel`).classList.add('active');
+    }
+
+    function handleFileSelect(event) {
+      selectedFile = event.target.files[0];
+      if (!selectedFile) return;
+
+      document.getElementById('fileName').textContent = selectedFile.name;
+      document.getElementById('fileSize').textContent = formatFileSize(selectedFile.size);
+      document.getElementById('fileInfo').style.display = 'block';
+      
+      document.getElementById('sendBtn').disabled = !selectedFile || !selectedDeviceId;
+    }
+
+    function sendFile() {
+      if (!selectedFile || !selectedDeviceId) return;
+
+      showStatus('sendStatus', '🔗 正在连接...', 'info');
+      
+      const conn = peer.connect(selectedDeviceId);
+      
+      conn.on('open', async () => {
+        showStatus('sendStatus', '📤 发送中...', 'info');
+        await sendFileInChunks(conn);
+      });
+
+      conn.on('error', (err) => {
+        showStatus('sendStatus', `❌ 发送失败: ${err}`, 'error');
+      });
+    }
+
+    async function sendFileInChunks(conn) {
+      document.getElementById('sendProgress').style.display = 'block';
+      document.getElementById('sendSpeedInfo').style.display = 'flex';
+
+      transferStartTime = Date.now();
+      transferredBytes = 0;
+
+      const fileBuffer = await selectedFile.arrayBuffer();
+      const totalChunks = Math.ceil(fileBuffer.byteLength / CHUNK_SIZE);
+
+      conn.send({
+        type: 'metadata',
+        name: selectedFile.name,
+        size: selectedFile.size,
+        mimeType: selectedFile.type,
+        totalChunks: totalChunks
+      });
+
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, fileBuffer.byteLength);
+        const chunk = fileBuffer.slice(start, end);
+
+        conn.send({
+          type: 'chunk',
+          index: i,
+          data: chunk
+        });
+
+        transferredBytes += (end - start);
+        const progress = ((i + 1) / totalChunks * 100).toFixed(1);
+        document.getElementById('sendProgressBar').style.width = progress + '%';
+        
+        // 更新速度和时间
+        updateSpeedInfo('send', transferredBytes, selectedFile.size);
+
+        if (SEND_DELAY > 0) {
+          await new Promise(resolve => setTimeout(resolve, SEND_DELAY));
+        }
+      }
+
+      conn.send({ type: 'complete' });
+      showStatus('sendStatus', '✅ 发送完成！', 'success');
+    }
+
+    function setupReceiver(conn) {
+      let chunks = [];
+      let metadata = null;
+      let receivedChunks = 0;
+
+      showStatus('receiveStatus', '📥 正在接收...', 'info');
+      document.getElementById('waitingState').style.display = 'none';
+
+      transferStartTime = Date.now();
+      transferredBytes = 0;
+
+      conn.on('data', (data) => {
+        if (data.type === 'metadata') {
+          metadata = data;
+          chunks = new Array(data.totalChunks);
+          document.getElementById('receiveProgress').style.display = 'block';
+          document.getElementById('receiveSpeedInfo').style.display = 'flex';
+        } 
+        else if (data.type === 'chunk') {
+          chunks[data.index] = data.data;
+          receivedChunks++;
+          
+          transferredBytes += data.data.byteLength;
+          const progress = (receivedChunks / metadata.totalChunks * 100).toFixed(1);
+          document.getElementById('receiveProgressBar').style.width = progress + '%';
+          
+          // 更新速度和时间
+          updateSpeedInfo('receive', transferredBytes, metadata.size);
+        }
+        else if (data.type === 'complete') {
+          const blob = new Blob(chunks, { type: metadata.mimeType });
+          
+          // 保存 blob，等待用户点击下载
+          downloadBlob = blob;
+          downloadFilename = metadata.name;
+          
+          // 显示下载按钮
+          showDownloadReady(metadata.name, metadata.size);
+        }
+      });
+    }
+
+    function showDownloadReady(filename, filesize) {
+      document.getElementById('receiveProgress').style.display = 'none';
+      document.getElementById('receiveSpeedInfo').style.display = 'none';
+      document.getElementById('receiveStatus').style.display = 'none';
+      
+      document.getElementById('downloadFileName').textContent = filename;
+      document.getElementById('downloadFileSize').textContent = formatFileSize(filesize);
+      document.getElementById('downloadReady').style.display = 'block';
+    }
+
+    function triggerDownload() {
+      if (!downloadBlob || !downloadFilename) return;
+
+      const url = URL.createObjectURL(downloadBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = downloadFilename;
+      
+      // 重要：先添加到 DOM
+      document.body.appendChild(a);
+      a.click();
+      
+      // 延迟移除，确保点击生效
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        showStatus('receiveStatus', '✅ 文件已下载！', 'success');
+        document.getElementById('downloadReady').style.display = 'none';
+      }, 100);
+    }
+
+    function updateSpeedInfo(mode, transferred, total) {
+      const elapsed = (Date.now() - transferStartTime) / 1000; // 秒
+      const speed = transferred / elapsed; // 字节/秒
+      const remaining = (total - transferred) / speed; // 秒
+      
+      const speedMB = (speed / (1024 * 1024)).toFixed(2);
+      const remainingTime = remaining < 60 
+        ? `${Math.ceil(remaining)}秒` 
+        : `${Math.ceil(remaining / 60)}分钟`;
+      
+      document.getElementById(`${mode}Speed`).textContent = `速度: ${speedMB} MB/s`;
+      document.getElementById(`${mode}Time`).textContent = `剩余: ${remainingTime}`;
+    }
+
+    function showStatus(elementId, message, type) {
+      const statusDiv = document.getElementById(elementId);
+      statusDiv.className = `status ${type}`;
+      statusDiv.textContent = message;
+      statusDiv.style.display = 'block';
+    }
+
+    function formatFileSize(bytes) {
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i];
+    }
+
+    document.getElementById('deviceName').addEventListener('change', (e) => {
+      myDeviceName = e.target.value;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'register',
+          deviceId: myDeviceId,
+          deviceName: myDeviceName
+        }));
+      }
+    });
+  </script>
+</body>
+</html>

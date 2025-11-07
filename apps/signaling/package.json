@@ -1,0 +1,14 @@
+{
+  "name": "@meshkit/signaling",
+  "version": "1.0.0",
+  "description": "MeshKit Signaling Server - 信令服务器",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "node src/server.js",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "ws": "^8.14.0"
+  }
+}
