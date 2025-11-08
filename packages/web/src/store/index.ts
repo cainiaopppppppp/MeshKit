@@ -2,7 +2,7 @@
  * Zustand Store - 应用状态管理
  */
 import { create } from 'zustand';
-import type { Device, FileMetadata, TransferProgress, Room, RoomMember } from '@meshkit/core';
+import type { Device, FileMetadata, TransferProgress, Room, RoomMember, FileQueueItem } from '@meshkit/core';
 
 interface AppState {
   // 连接状态
@@ -22,9 +22,17 @@ interface AppState {
   selectedDeviceId: string | null;
   selectDevice: (deviceId: string | null) => void;
 
-  // 当前文件
+  // 当前文件（单文件模式）
   currentFile: FileMetadata | null;
   setCurrentFile: (file: FileMetadata | null) => void;
+
+  // 文件队列（多文件模式）
+  fileQueue: FileQueueItem[];
+  isQueueMode: boolean;
+  queueDirection: 'send' | 'receive' | null; // 队列方向：用于区分发送和接收队列
+  setFileQueue: (queue: FileQueueItem[]) => void;
+  setQueueMode: (isQueue: boolean) => void;
+  setQueueDirection: (direction: 'send' | 'receive' | null) => void;
 
   // 传输状态
   isTransferring: boolean;
@@ -71,6 +79,9 @@ export const useAppStore = create<AppState>((set) => ({
   devices: [],
   selectedDeviceId: null,
   currentFile: null,
+  fileQueue: [],
+  isQueueMode: false,
+  queueDirection: null,
   isTransferring: false,
   transferDirection: null,
   transferProgress: null,
@@ -93,6 +104,12 @@ export const useAppStore = create<AppState>((set) => ({
   selectDevice: (deviceId) => set({ selectedDeviceId: deviceId }),
 
   setCurrentFile: (file) => set({ currentFile: file }),
+
+  setFileQueue: (queue) => set({ fileQueue: queue }),
+
+  setQueueMode: (isQueue) => set({ isQueueMode: isQueue }),
+
+  setQueueDirection: (direction) => set({ queueDirection: direction }),
 
   setTransferring: (transferring, direction) =>
     set({
@@ -147,6 +164,9 @@ export const useAppStore = create<AppState>((set) => ({
   reset: () =>
     set({
       currentFile: null,
+      fileQueue: [],
+      isQueueMode: false,
+      queueDirection: null,
       isTransferring: false,
       transferDirection: null,
       transferProgress: null,

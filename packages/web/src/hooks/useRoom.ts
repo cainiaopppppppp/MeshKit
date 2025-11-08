@@ -13,6 +13,8 @@ export function useRoom() {
     setBroadcastProgress,
     updateMemberProgress,
     resetRoom,
+    isQueueMode,
+    fileQueue,
   } = useAppStore();
 
   const [isCreating, setIsCreating] = useState(false);
@@ -20,27 +22,39 @@ export function useRoom() {
   const [error, setError] = useState<string | null>(null);
 
   /**
-   * 创建房间
+   * 创建房间（支持单文件和多文件队列）
    */
   const createRoom = useCallback(async (file: File): Promise<Room | null> => {
     setIsCreating(true);
     setError(null);
 
     try {
-      // 先选择文件
-      const success = await fileTransferManager.selectFile(file);
-      if (!success) {
-        throw new Error('文件选择失败');
+      let fileInfo: FileMetadata;
+      let fileList: FileMetadata[] | undefined;
+
+      if (isQueueMode && fileQueue.length > 0) {
+        // 队列模式：文件已经被selectFiles选择了，不需要再次选择
+        // 使用第一个文件的信息创建房间，并传递完整的文件列表
+        const firstFile = fileQueue[0];
+        fileInfo = firstFile.metadata;
+        fileList = fileQueue.map(item => item.metadata);
+        console.log('[useRoom] Creating room in queue mode:', fileQueue.length, 'files');
+      } else {
+        // 单文件模式：选择文件
+        const success = await fileTransferManager.selectFile(file);
+        if (!success) {
+          throw new Error('文件选择失败');
+        }
+
+        fileInfo = {
+          name: file.name,
+          size: file.size,
+          type: file.type,
+        };
       }
 
-      const fileInfo: FileMetadata = {
-        name: file.name,
-        size: file.size,
-        type: file.type,
-      };
-
-      // 创建房间
-      const room = await roomManager.createRoom(fileInfo);
+      // 创建房间（传递文件列表）
+      const room = await roomManager.createRoom(fileInfo, fileList);
       setCurrentRoom(room);
 
       console.log('[useRoom] Room created:', room);
@@ -53,7 +67,7 @@ export function useRoom() {
     } finally {
       setIsCreating(false);
     }
-  }, [setCurrentRoom]);
+  }, [setCurrentRoom, isQueueMode, fileQueue]);
 
   /**
    * 加入房间

@@ -1,19 +1,26 @@
 /**
  * FileTransferManager - 文件传输管理器
- * 处理文件的发送和接收
+ * 处理文件的发送和接收（支持单文件和多文件传输）
  */
 import type { DataConnection } from 'peerjs';
 import { eventBus } from '../utils/EventBus';
 import { config } from '../utils/Config';
 import { p2pManager } from './P2PManager';
-import type { FileMetadata, ChunkData, TransferDirection } from '../types';
+import type { FileMetadata, ChunkData, TransferDirection, FileQueueItem } from '../types';
 // @ts-ignore - StreamSaver doesn't have types
 import streamSaver from 'streamsaver';
 
 export class FileTransferManager {
+  // 单文件模式（向后兼容）
   private currentFile: File | null = null;
   private isTransferring: boolean = false;
   private transferDirection: TransferDirection | null = null;
+
+  // 多文件队列
+  private fileQueue: FileQueueItem[] = [];
+  private currentQueueIndex: number = -1;
+  private isQueueMode: boolean = false;
+  private queueDirection: 'send' | 'receive' | null = null; // 队列方向：用于区分发送队列和接收队列
 
   // 发送状态（点对点模式）
   private sendConnection: DataConnection | null = null;
@@ -186,7 +193,7 @@ export class FileTransferManager {
   }
 
   /**
-   * 选择文件
+   * 选择文件（单文件模式）
    */
   async selectFile(file: File): Promise<boolean> {
     if (this.isTransferring) {
@@ -217,6 +224,527 @@ export class FileTransferManager {
     });
 
     return true;
+  }
+
+  /**
+   * 选择多个文件（多文件模式）
+   */
+  async selectFiles(files: File[]): Promise<boolean> {
+    if (this.isTransferring) {
+      console.warn('[FileTransferManager] Transfer in progress');
+      return false;
+    }
+
+    if (files.length === 0) {
+      console.warn('[FileTransferManager] No files provided');
+      return false;
+    }
+
+    console.log(`[FileTransferManager] Selecting ${files.length} files for transfer`);
+
+    // 验证所有文件可读性
+    const validatedFiles: File[] = [];
+    for (const file of files) {
+      try {
+        console.log(`[FileTransferManager] Validating: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+        await this.validateFileReadable(file);
+        validatedFiles.push(file);
+      } catch (error) {
+        console.error(`[FileTransferManager] File validation failed for ${file.name}:`, error);
+        // 跳过无效文件，继续处理其他文件
+      }
+    }
+
+    if (validatedFiles.length === 0) {
+      eventBus.emit('transfer:error', {
+        error: new Error('所有文件验证失败，无可用文件'),
+        direction: 'send',
+      });
+      return false;
+    }
+
+    // 创建文件队列
+    this.fileQueue = validatedFiles.map((file, index) => ({
+      file,
+      index,
+      metadata: {
+        name: file.name,
+        size: file.size,
+        type: file.type,
+      },
+      status: 'pending',
+      progress: 0,
+      selected: true, // 发送方默认全选
+    }));
+
+    this.isQueueMode = true;
+    this.queueDirection = 'send'; // 标记为发送队列
+    this.currentQueueIndex = -1;
+
+    console.log(`[FileTransferManager] ✅ ${validatedFiles.length}/${files.length} files ready for transfer`);
+
+    // 通知UI队列已更新
+    eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+
+    return true;
+  }
+
+  /**
+   * 继续添加文件到队列（不清空已有文件）
+   */
+  async appendFiles(files: File[]): Promise<boolean> {
+    if (this.isTransferring) {
+      console.warn('[FileTransferManager] Transfer in progress');
+      return false;
+    }
+
+    if (files.length === 0) {
+      console.warn('[FileTransferManager] No files provided');
+      return false;
+    }
+
+    console.log(`[FileTransferManager] Appending ${files.length} files to queue`);
+
+    // 验证所有文件可读性
+    const validatedFiles: File[] = [];
+    for (const file of files) {
+      try {
+        console.log(`[FileTransferManager] Validating: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+        await this.validateFileReadable(file);
+        validatedFiles.push(file);
+      } catch (error) {
+        console.error(`[FileTransferManager] File validation failed for ${file.name}:`, error);
+      }
+    }
+
+    if (validatedFiles.length === 0) {
+      console.warn('[FileTransferManager] No valid files to append');
+      return false;
+    }
+
+    // 获取当前队列的最大索引
+    const startIndex = this.fileQueue.length;
+
+    // 添加新文件到队列
+    const newItems = validatedFiles.map((file, idx) => ({
+      file,
+      index: startIndex + idx,
+      metadata: {
+        name: file.name,
+        size: file.size,
+        type: file.type,
+      },
+      status: 'pending' as const,
+      progress: 0,
+      selected: true,
+    }));
+
+    this.fileQueue.push(...newItems);
+    this.isQueueMode = true;
+    this.queueDirection = 'send'; // 标记为发送队列
+
+    console.log(`[FileTransferManager] ✅ Added ${validatedFiles.length} files, total: ${this.fileQueue.length}`);
+
+    // 通知UI队列已更新
+    eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+
+    return true;
+  }
+
+  /**
+   * 清空文件队列
+   */
+  clearFileQueue(): void {
+    if (this.isTransferring) {
+      console.warn('[FileTransferManager] Cannot clear queue during transfer');
+      return;
+    }
+
+    console.log('[FileTransferManager] Clearing file queue');
+    this.fileQueue = [];
+    this.isQueueMode = false;
+    this.queueDirection = null; // 清空方向
+    this.currentQueueIndex = -1;
+    this.currentFile = null;
+
+    eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+  }
+
+  /**
+   * 创建接收文件队列（用于房间模式成员选择文件）
+   * @param fileList 选择的文件元数据列表
+   */
+  createReceiveQueue(fileList: FileMetadata[]): void {
+    if (this.isTransferring) {
+      console.warn('[FileTransferManager] Cannot create receive queue during transfer');
+      return;
+    }
+
+    console.log('[FileTransferManager] Creating receive queue with', fileList.length, 'files');
+
+    // 创建接收队列（没有实际的 File 对象，只有元数据）
+    this.fileQueue = fileList.map((metadata, index) => ({
+      file: null as any, // 接收方没有实际的 File 对象
+      index,
+      metadata,
+      status: 'pending',
+      progress: 0,
+      selected: true, // 用户已经选择了这些文件
+    }));
+
+    this.isQueueMode = true;
+    this.queueDirection = 'receive'; // 标记为接收队列
+
+    eventBus.emit('transfer:queue-updated', {
+      queue: this.fileQueue,
+      direction: this.queueDirection,
+    });
+  }
+
+  /**
+   * 发送文件列表（点对点模式）
+   */
+  async sendFileList(targetDeviceId: string): Promise<boolean> {
+    if (!this.isQueueMode || this.fileQueue.length === 0) {
+      console.error('[FileTransferManager] No file queue available');
+      return false;
+    }
+
+    if (this.isTransferring) {
+      console.warn('[FileTransferManager] Transfer already in progress');
+      return false;
+    }
+
+    try {
+      console.log(`[FileTransferManager] Sending file list to ${targetDeviceId}`);
+
+      // 建立连接 - 必须确保连接已打开
+      let conn: DataConnection | null = p2pManager.getConnection(targetDeviceId, 'outgoing') || null;
+
+      // 如果连接不存在或未打开，等待连接建立
+      if (!conn || !conn.open) {
+        console.log('[FileTransferManager] Connection not ready, waiting...');
+        conn = await this.waitForConnection(targetDeviceId);
+      }
+
+      if (!conn || !conn.open) {
+        throw new Error('Failed to establish open connection');
+      }
+
+      console.log('[FileTransferManager] Connection is ready, sending file list...');
+
+      // 计算总大小
+      const totalSize = this.fileQueue.reduce((sum, item) => sum + item.file.size, 0);
+
+      // 发送文件列表元数据
+      const fileListMessage: ChunkData = {
+        type: 'file-list',
+        files: this.fileQueue.map(item => item.metadata),
+        totalSize,
+      };
+
+      conn.send(fileListMessage);
+      console.log(`[FileTransferManager] ✅ File list sent: ${this.fileQueue.length} files, ${(totalSize / 1024 / 1024).toFixed(2)} MB total`);
+
+      return true;
+    } catch (error) {
+      console.error('[FileTransferManager] Failed to send file list:', error);
+      eventBus.emit('transfer:error', {
+        error: error as Error,
+        direction: 'send',
+      });
+      return false;
+    }
+  }
+
+  /**
+   * 等待连接建立（辅助方法）
+   */
+  private async waitForConnection(targetDeviceId: string, timeout: number = 10000): Promise<DataConnection | null> {
+    return new Promise((resolve) => {
+      const startTime = Date.now();
+
+      const checkInterval = setInterval(() => {
+        const conn = p2pManager.getConnection(targetDeviceId, 'outgoing');
+        // 检查连接是否存在且已打开
+        if (conn && conn.open) {
+          clearInterval(checkInterval);
+          console.log('[FileTransferManager] Connection is open and ready');
+          resolve(conn);
+        } else if (Date.now() - startTime > timeout) {
+          clearInterval(checkInterval);
+          console.error('[FileTransferManager] ❌ Connection timeout - 可能原因:');
+          console.error('  1. 信令服务器未连接或连接断开');
+          console.error('  2. 目标设备离线或未响应');
+          console.error('  3. 网络防火墙阻止连接');
+          console.error('  提示: 请检查信令服务器是否正常运行');
+          resolve(null);
+        }
+      }, 100);
+
+      // 如果还没连接，主动连接
+      if (!p2pManager.getConnection(targetDeviceId, 'outgoing')) {
+        console.log('[FileTransferManager] Initiating connection to', targetDeviceId);
+        p2pManager.connect(targetDeviceId, { type: 'file-list' });
+      }
+    });
+  }
+
+  /**
+   * 处理接收到的文件列表
+   */
+  private handleFileListReceived(data: ChunkData, peer: string): void {
+    if (!data.files || !data.totalSize) {
+      console.error('[FileTransferManager] Invalid file list data');
+      return;
+    }
+
+    console.log(`[FileTransferManager] 📋 Received file list: ${data.files.length} files, ${(data.totalSize / 1024 / 1024).toFixed(2)} MB total`);
+
+    // 创建接收队列（默认不选中，由用户选择）
+    this.fileQueue = data.files.map((metadata, index) => ({
+      file: null as any, // 接收方没有File对象
+      index,
+      metadata,
+      status: 'pending',
+      progress: 0,
+      selected: false, // 默认不选中，等待用户选择
+    }));
+
+    this.isQueueMode = true;
+    this.queueDirection = 'receive'; // 标记为接收队列
+    this.currentQueueIndex = -1;
+    this.receiveConnection = p2pManager.getConnection(peer, 'incoming') || null;
+
+    // 通知UI显示文件选择界面
+    eventBus.emit('transfer:file-list-received', {
+      files: data.files,
+      totalSize: data.totalSize,
+    });
+
+    eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+  }
+
+  /**
+   * 发送文件选择结果（接收方 -> 发送方）
+   */
+  async sendFileSelection(selectedIndexes: number[]): Promise<boolean> {
+    if (!this.receiveConnection || !this.isQueueMode) {
+      console.error('[FileTransferManager] No receive connection or not in queue mode');
+      return false;
+    }
+
+    try {
+      console.log(`[FileTransferManager] Sending file selection: ${selectedIndexes.length} files selected`);
+
+      // 更新本地队列的选中状态
+      this.fileQueue.forEach(item => {
+        item.selected = selectedIndexes.includes(item.index);
+      });
+
+      // 发送选择结果
+      const selectionMessage: ChunkData = {
+        type: 'file-selection',
+        selectedIndexes,
+      };
+
+      this.receiveConnection.send(selectionMessage);
+
+      eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+
+      console.log('[FileTransferManager] ✅ File selection sent');
+      return true;
+    } catch (error) {
+      console.error('[FileTransferManager] Failed to send file selection:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 处理接收到的文件选择（发送方）
+   */
+  private handleFileSelectionReceived(data: ChunkData, peer: string): void {
+    if (!data.selectedIndexes || !this.isQueueMode) {
+      console.error('[FileTransferManager] Invalid file selection data');
+      return;
+    }
+
+    console.log(`[FileTransferManager] 📋 Received file selection: ${data.selectedIndexes.length} files selected`);
+
+    // 更新队列的选中状态
+    this.fileQueue.forEach(item => {
+      item.selected = data.selectedIndexes!.includes(item.index);
+      if (!item.selected) {
+        item.status = 'skipped'; // 未选中的标记为跳过
+      }
+    });
+
+    eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+
+    // 自动开始传输选中的文件
+    this.startQueueTransfer(peer);
+  }
+
+  /**
+   * 开始队列传输（发送选中的文件）
+   */
+  private async startQueueTransfer(targetDeviceId: string): Promise<void> {
+    if (!this.isQueueMode || this.fileQueue.length === 0) {
+      console.error('[FileTransferManager] No queue to transfer');
+      return;
+    }
+
+    const selectedFiles = this.fileQueue.filter(item => item.selected);
+    if (selectedFiles.length === 0) {
+      console.warn('[FileTransferManager] No files selected for transfer');
+      eventBus.emit('transfer:queue-completed', {
+        totalFiles: 0,
+        successCount: 0,
+        failedCount: 0,
+      });
+      return;
+    }
+
+    console.log(`[FileTransferManager] 🚀 Starting queue transfer: ${selectedFiles.length} files`);
+
+    this.isTransferring = true;
+    this.transferDirection = 'send';
+
+    let successCount = 0;
+    let failedCount = 0;
+
+    // 依次传输每个选中的文件
+    for (const queueItem of selectedFiles) {
+      this.currentQueueIndex = queueItem.index;
+      this.currentFile = queueItem.file;
+      queueItem.status = 'transferring';
+
+      eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+      eventBus.emit('transfer:file-item-started', {
+        fileIndex: queueItem.index,
+        file: queueItem.metadata,
+      });
+
+      try {
+        // 建立连接并发送当前文件
+        await this.sendQueueFile(targetDeviceId, queueItem);
+
+        queueItem.status = 'completed';
+        queueItem.progress = 100;
+        successCount++;
+
+        eventBus.emit('transfer:file-item-completed', {
+          fileIndex: queueItem.index,
+          file: queueItem.metadata,
+        });
+
+        console.log(`[FileTransferManager] ✅ File ${queueItem.index + 1}/${selectedFiles.length} completed: ${queueItem.metadata.name}`);
+      } catch (error) {
+        queueItem.status = 'failed';
+        queueItem.error = (error as Error).message;
+        failedCount++;
+
+        eventBus.emit('transfer:file-item-failed', {
+          fileIndex: queueItem.index,
+          file: queueItem.metadata,
+          error: error as Error,
+        });
+
+        console.error(`[FileTransferManager] ❌ File ${queueItem.index + 1}/${selectedFiles.length} failed: ${queueItem.metadata.name}`, error);
+
+        // 继续传输下一个文件，不中断队列
+      }
+
+      eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+    }
+
+    // 发送队列完成消息
+    const conn = p2pManager.getConnection(targetDeviceId, 'outgoing');
+    if (conn) {
+      conn.send({ type: 'queue-complete' } as ChunkData);
+    }
+
+    this.isTransferring = false;
+
+    eventBus.emit('transfer:queue-completed', {
+      totalFiles: selectedFiles.length,
+      successCount,
+      failedCount,
+    });
+
+    console.log(`[FileTransferManager] 🎉 Queue transfer completed: ${successCount} success, ${failedCount} failed`);
+  }
+
+  /**
+   * 发送队列中的单个文件
+   */
+  private async sendQueueFile(targetDeviceId: string, queueItem: FileQueueItem): Promise<void> {
+    const conn = p2pManager.getConnection(targetDeviceId, 'outgoing');
+    if (!conn) {
+      throw new Error('Connection lost');
+    }
+
+    const file = queueItem.file;
+    const chunkSize = config.get('transfer').chunkSize;
+    const sendDelay = config.get('transfer').sendDelay;
+    const totalChunks = Math.ceil(file.size / chunkSize);
+
+    console.log(`[FileTransferManager] 📤 Sending file: ${file.name} (${totalChunks} chunks)`);
+
+    // 发送start-file消息
+    conn.send({
+      type: 'start-file',
+      fileIndex: queueItem.index,
+      queueIndex: queueItem.index,
+      name: file.name,
+      size: file.size,
+      mimeType: file.type,
+      totalChunks,
+    } as ChunkData);
+
+    // 等待一下确保接收方准备好
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // 发送文件内容（重用现有的chunk发送逻辑）
+    this.transferStartTime = Date.now();
+    this.transferredBytes = 0;
+
+    for (let i = 0; i < totalChunks; i++) {
+      await this.waitForBufferDrain();
+
+      const start = i * chunkSize;
+      const end = Math.min(start + chunkSize, file.size);
+      const chunk = await this.readFileChunk(file, start, end);
+
+      conn.send({
+        type: 'chunk',
+        index: i,
+        data: chunk,
+        fileIndex: queueItem.index, // 标识当前文件
+      } as ChunkData);
+
+      // 等待ACK
+      await this.waitForAck(i, 10000);
+
+      this.transferredBytes += chunk.byteLength;
+      queueItem.progress = ((i + 1) / totalChunks) * 100;
+
+      if (i % 10 === 0 || i === totalChunks - 1) {
+        eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+      }
+
+      if (sendDelay > 0) {
+        await new Promise(resolve => setTimeout(resolve, sendDelay));
+      }
+    }
+
+    // 发送complete消息
+    conn.send({
+      type: 'complete',
+      fileIndex: queueItem.index,
+    } as ChunkData);
+
+    console.log(`[FileTransferManager] ✅ File sent: ${file.name}`);
   }
 
   /**
@@ -296,9 +824,16 @@ export class FileTransferManager {
   }
 
   /**
-   * 向房间成员广播文件
+   * 向房间成员广播文件（支持单文件和多文件队列）
    */
   async sendFileToRoom(memberDeviceIds: string[]): Promise<boolean> {
+    // 检查是队列模式还是单文件模式
+    if (this.isQueueMode && this.fileQueue.length > 0) {
+      // 多文件队列模式
+      return this.sendFileQueueToRoom(memberDeviceIds);
+    }
+
+    // 单文件模式
     if (!this.currentFile) {
       console.error('[FileTransferManager] No file selected');
       return false;
@@ -355,6 +890,141 @@ export class FileTransferManager {
       this.handleTransferError(error as Error);
       return false;
     }
+  }
+
+  /**
+   * 向房间成员广播文件队列（多文件模式）
+   */
+  private async sendFileQueueToRoom(memberDeviceIds: string[]): Promise<boolean> {
+    if (this.fileQueue.length === 0) {
+      console.error('[FileTransferManager] No files in queue');
+      return false;
+    }
+
+    if (this.isTransferring) {
+      console.warn('[FileTransferManager] Transfer already in progress');
+      return false;
+    }
+
+    if (memberDeviceIds.length === 0) {
+      console.warn('[FileTransferManager] No members to send to');
+      return false;
+    }
+
+    console.log(`[FileTransferManager] 🏠 Starting room queue broadcast: ${this.fileQueue.length} files to ${memberDeviceIds.length} members`);
+
+    this.isTransferring = true;
+    this.isBroadcastMode = true;
+    this.transferDirection = 'send';
+
+    let successCount = 0;
+    let failedCount = 0;
+
+    // 依次广播每个文件
+    for (const queueItem of this.fileQueue) {
+      if (!queueItem.selected) {
+        queueItem.status = 'skipped';
+        eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+        continue;
+      }
+
+      this.currentQueueIndex = queueItem.index;
+      this.currentFile = queueItem.file;
+      queueItem.status = 'transferring';
+
+      eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+      eventBus.emit('transfer:file-item-started', {
+        fileIndex: queueItem.index,
+        file: queueItem.metadata,
+      });
+
+      try {
+        // 为当前文件广播到所有成员
+        await this.broadcastSingleFileToRoom(memberDeviceIds, queueItem);
+
+        queueItem.status = 'completed';
+        queueItem.progress = 100;
+        successCount++;
+
+        eventBus.emit('transfer:file-item-completed', {
+          fileIndex: queueItem.index,
+          file: queueItem.metadata,
+        });
+
+        console.log(`[FileTransferManager] ✅ Room broadcast file ${queueItem.index + 1}/${this.fileQueue.length} completed: ${queueItem.metadata.name}`);
+      } catch (error) {
+        queueItem.status = 'failed';
+        queueItem.error = (error as Error).message;
+        failedCount++;
+
+        eventBus.emit('transfer:file-item-failed', {
+          fileIndex: queueItem.index,
+          file: queueItem.metadata,
+          error: error as Error,
+        });
+
+        console.error(`[FileTransferManager] ❌ Room broadcast file ${queueItem.index + 1}/${this.fileQueue.length} failed: ${queueItem.metadata.name}`, error);
+
+        // 继续广播下一个文件
+      }
+
+      eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+    }
+
+    this.isTransferring = false;
+
+    eventBus.emit('transfer:queue-completed', {
+      totalFiles: this.fileQueue.filter(item => item.selected).length,
+      successCount,
+      failedCount,
+    });
+
+    console.log(`[FileTransferManager] 🎉 Room queue broadcast completed: ${successCount} success, ${failedCount} failed`);
+    return true;
+  }
+
+  /**
+   * 广播单个文件到房间成员
+   */
+  private async broadcastSingleFileToRoom(memberDeviceIds: string[], queueItem: any): Promise<void> {
+    const file = queueItem.file;
+
+    console.log(`[FileTransferManager] 📡 Broadcasting file: ${file.name} to ${memberDeviceIds.length} members`);
+
+    this.transferStartTime = Date.now();
+    this.transferredBytes = 0;
+
+    // 初始化每个成员的进度跟踪
+    memberDeviceIds.forEach(deviceId => {
+      this.broadcastProgress.set(deviceId, 0);
+      this.broadcastLastAcked.set(deviceId, -1);
+      this.broadcastPendingAcks.set(deviceId, new Map());
+    });
+
+    // 清空之前的连接
+    this.broadcastConnections.clear();
+
+    // 向所有成员建立P2P连接
+    memberDeviceIds.forEach(deviceId => {
+      p2pManager.connect(deviceId, {
+        type: 'file-transfer',
+        fileName: file.name,
+        fileSize: file.size,
+      });
+    });
+
+    // 等待所有连接建立
+    const timeout = 10000; // 10秒超时
+    const startTime = Date.now();
+    while (this.broadcastConnections.size < memberDeviceIds.length) {
+      if (Date.now() - startTime > timeout) {
+        throw new Error('Connection timeout waiting for room members');
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    // 开始广播文件
+    await this.startBroadcasting();
   }
 
   /**
@@ -921,6 +1591,24 @@ export class FileTransferManager {
    * 处理接收数据
    */
   private async handleIncomingData(data: ChunkData, peer?: string): Promise<void> {
+    // 多文件传输消息类型
+    if (data.type === 'file-list') {
+      this.handleFileListReceived(data, peer!);
+      return;
+    } else if (data.type === 'file-selection') {
+      this.handleFileSelectionReceived(data, peer!);
+      return;
+    } else if (data.type === 'start-file') {
+      // 开始接收队列中的某个文件
+      this.handleStartFileReceived(data);
+      return;
+    } else if (data.type === 'queue-complete') {
+      // 队列传输完成
+      this.handleQueueCompleteReceived();
+      return;
+    }
+
+    // 单文件传输消息类型（向后兼容）
     if (data.type === 'metadata') {
       // 接收元数据
       this.receiveMetadata = {
@@ -983,6 +1671,15 @@ export class FileTransferManager {
             this.emitProgress('receive', this.receiveMetadata.size);
           }
         }
+
+        // 如果是队列模式，更新当前文件的进度
+        if (this.isQueueMode && this.currentQueueIndex >= 0) {
+          const currentItem = this.fileQueue[this.currentQueueIndex];
+          if (currentItem && this.receiveMetadata) {
+            currentItem.progress = (this.receivedChunkCount / this.receiveMetadata.totalChunks!) * 100;
+            eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+          }
+        }
       }
     } else if (data.type === 'ack') {
       // 收到ACK确认
@@ -1001,7 +1698,96 @@ export class FileTransferManager {
       this.clearTransferTimeout();
       // 关键修复：必须await，确保流关闭完成
       await this.assembleReceivedFile();
+
+      // 如果是队列模式，标记当前文件为完成
+      if (this.isQueueMode && this.currentQueueIndex >= 0) {
+        const currentItem = this.fileQueue[this.currentQueueIndex];
+        if (currentItem) {
+          currentItem.status = 'completed';
+          currentItem.progress = 100;
+
+          eventBus.emit('transfer:file-item-completed', {
+            fileIndex: currentItem.index,
+            file: currentItem.metadata,
+          });
+
+          eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+        }
+      }
     }
+  }
+
+  /**
+   * 处理开始接收队列文件
+   */
+  private handleStartFileReceived(data: ChunkData): void {
+    if (data.fileIndex === undefined || !data.name || !data.size) {
+      console.error('[FileTransferManager] Invalid start-file message');
+      return;
+    }
+
+    console.log(`[FileTransferManager] 📥 Starting to receive file: ${data.name} (index: ${data.fileIndex})`);
+
+    // 更新当前队列索引
+    this.currentQueueIndex = data.fileIndex;
+
+    // 更新队列项状态
+    if (this.isQueueMode && this.currentQueueIndex >= 0) {
+      const currentItem = this.fileQueue[this.currentQueueIndex];
+      if (currentItem) {
+        currentItem.status = 'transferring';
+        eventBus.emit('transfer:file-item-started', {
+          fileIndex: currentItem.index,
+          file: currentItem.metadata,
+        });
+        eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+      }
+    }
+
+    // 准备接收文件（重置接收状态）
+    this.receiveMetadata = {
+      name: data.name,
+      size: data.size,
+      type: data.mimeType || '',
+      totalChunks: data.totalChunks,
+    };
+    this.receiveChunks.clear();
+    this.receiveBlobParts = [];
+    this.nextBatchIndex = 0;
+    this.receivedChunkCount = 0;
+    this.transferStartTime = Date.now();
+    this.transferredBytes = 0;
+    this.isTransferring = true;
+    this.transferDirection = 'receive';
+
+    // 队列模式不使用流式下载（为了支持多文件下载）
+    this.isStreamingDownload = false;
+
+    // 设置接收超时
+    const timeout = config.get('transfer').timeout;
+    this.setupTransferTimeout(timeout);
+  }
+
+  /**
+   * 处理队列传输完成
+   */
+  private handleQueueCompleteReceived(): void {
+    console.log('[FileTransferManager] 📦 Queue transfer completed');
+
+    this.isTransferring = false;
+
+    // 统计结果
+    const totalFiles = this.fileQueue.filter(item => item.selected).length;
+    const successCount = this.fileQueue.filter(item => item.status === 'completed').length;
+    const failedCount = this.fileQueue.filter(item => item.status === 'failed').length;
+
+    eventBus.emit('transfer:queue-completed', {
+      totalFiles,
+      successCount,
+      failedCount,
+    });
+
+    console.log(`[FileTransferManager] 🎉 Received ${successCount}/${totalFiles} files successfully`);
   }
 
   /**
@@ -1408,6 +2194,12 @@ export class FileTransferManager {
     this.broadcastPendingAcks.clear();
     this.broadcastProgress.clear();
     this.broadcastLastAcked.clear();
+
+    // 清理队列模式状态
+    this.fileQueue = [];
+    this.currentQueueIndex = -1;
+    this.isQueueMode = false;
+    this.queueDirection = null;
   }
 
   /**
@@ -1454,6 +2246,86 @@ export class FileTransferManager {
       blob: this.downloadBlob,
       filename: this.downloadFilename,
     };
+  }
+
+  /**
+   * 获取文件队列
+   */
+  getFileQueue(): FileQueueItem[] {
+    return this.fileQueue;
+  }
+
+  /**
+   * 是否处于队列模式
+   */
+  isInQueueMode(): boolean {
+    return this.isQueueMode;
+  }
+
+  /**
+   * 获取队列状态摘要
+   */
+  getQueueSummary() {
+    if (!this.isQueueMode) {
+      return null;
+    }
+
+    const selectedFiles = this.fileQueue.filter(item => item.selected);
+    const totalSize = selectedFiles.reduce((sum, item) => sum + item.metadata.size, 0);
+    const completedCount = this.fileQueue.filter(item => item.status === 'completed').length;
+    const failedCount = this.fileQueue.filter(item => item.status === 'failed').length;
+    const transferringCount = this.fileQueue.filter(item => item.status === 'transferring').length;
+
+    return {
+      totalFiles: this.fileQueue.length,
+      selectedCount: selectedFiles.length,
+      totalSize,
+      completedCount,
+      failedCount,
+      transferringCount,
+      currentIndex: this.currentQueueIndex,
+    };
+  }
+
+  /**
+   * 从队列中移除文件
+   */
+  removeFileFromQueue(index: number): boolean {
+    if (!this.isQueueMode || this.isTransferring) {
+      console.warn('[FileTransferManager] Cannot remove file: not in queue mode or transfer in progress');
+      return false;
+    }
+
+    const fileIndex = this.fileQueue.findIndex(item => item.index === index);
+    if (fileIndex === -1) {
+      console.warn('[FileTransferManager] File not found in queue:', index);
+      return false;
+    }
+
+    const item = this.fileQueue[fileIndex];
+    if (item.status === 'transferring' || item.status === 'completed') {
+      console.warn('[FileTransferManager] Cannot remove file in progress or completed');
+      return false;
+    }
+
+    console.log('[FileTransferManager] Removing file from queue:', item.metadata.name);
+    this.fileQueue.splice(fileIndex, 1);
+
+    // 重新索引队列
+    this.fileQueue.forEach((item, idx) => {
+      item.index = idx;
+    });
+
+    // 如果队列为空，退出队列模式
+    if (this.fileQueue.length === 0) {
+      this.isQueueMode = false;
+      this.currentFile = null;
+    }
+
+    // 通知UI更新
+    eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+
+    return true;
   }
 }
 

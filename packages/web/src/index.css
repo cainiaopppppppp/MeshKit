@@ -180,8 +180,7 @@ code {
 /* 创建/加入房间表单 */
 .create-room,
 .join-room {
-  max-width: 500px;
-  margin: 0 auto;
+  /* 移除max-width限制，与点对点模式保持一致的宽度 */
 }
 
 .section-title {
