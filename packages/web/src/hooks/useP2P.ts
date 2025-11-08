@@ -9,6 +9,7 @@ import {
   fileTransferManager,
 } from '@meshkit/core';
 import { useAppStore } from '../store';
+import { fileStorage } from '../utils/FileStorage';
 
 const SIGNALING_URL = `ws://${window.location.hostname}:8000`;
 
@@ -16,6 +17,7 @@ const SIGNALING_URL = `ws://${window.location.hostname}:8000`;
 const STORAGE_KEYS = {
   DEVICE_ID: 'meshkit_device_id',
   DEVICE_NAME: 'meshkit_device_name',
+  LAST_FILE_ID: 'meshkit_last_file_id',
 };
 
 /**
@@ -45,6 +47,52 @@ function persistDeviceInfo(deviceId: string, deviceName: string): void {
   }
 }
 
+/**
+ * 恢复上次接收的文件
+ * 需要在组件加载后调用，以便可以设置状态
+ */
+let restoredFileInfo: { blob: Blob; filename: string } | null = null;
+
+async function restoreLastReceivedFile(): Promise<void> {
+  try {
+    const lastFileId = localStorage.getItem(STORAGE_KEYS.LAST_FILE_ID);
+    if (!lastFileId) {
+      console.log('[useP2P] No file to restore');
+      return;
+    }
+
+    const storedFile = await fileStorage.getFile(lastFileId);
+    if (!storedFile) {
+      console.log('[useP2P] Stored file not found:', lastFileId);
+      localStorage.removeItem(STORAGE_KEYS.LAST_FILE_ID);
+      return;
+    }
+
+    // 保存恢复的文件信息，稍后在组件中设置
+    restoredFileInfo = {
+      blob: storedFile.blob,
+      filename: storedFile.filename,
+    };
+
+    console.log('[useP2P] File restored from IndexedDB:', storedFile.filename);
+  } catch (error) {
+    console.error('[useP2P] Failed to restore file:', error);
+  }
+}
+
+/**
+ * 保存接收到的文件
+ */
+async function saveReceivedFile(file: File): Promise<void> {
+  try {
+    const fileId = await fileStorage.saveFile(file);
+    localStorage.setItem(STORAGE_KEYS.LAST_FILE_ID, fileId);
+    console.log('[useP2P] File saved to IndexedDB:', file.name, fileId);
+  } catch (error) {
+    console.error('[useP2P] Failed to save file:', error);
+  }
+}
+
 export function useP2P() {
   const {
     setConnected,
@@ -61,6 +109,13 @@ export function useP2P() {
     // 初始化
     const initialize = async () => {
       try {
+        // 初始化文件存储
+        await fileStorage.init();
+        console.log('[useP2P] File storage initialized');
+
+        // 尝试恢复上次接收的文件
+        await restoreLastReceivedFile();
+
         // 尝试从 localStorage 读取已保存的设备信息
         const persisted = getPersistedDeviceInfo();
         console.log('[useP2P] Persisted device info:', persisted);
@@ -80,6 +135,15 @@ export function useP2P() {
 
         // 连接信令服务器
         connectSignaling(SIGNALING_URL);
+
+        // 清理7天前的旧文件
+        fileStorage.cleanupOldFiles(7).catch(console.error);
+
+        // 如果恢复了文件，设置下载状态
+        if (restoredFileInfo) {
+          setDownload(true, restoredFileInfo.filename);
+          console.log('[useP2P] Restored file download ready:', restoredFileInfo.filename);
+        }
       } catch (error) {
         console.error('Failed to initialize:', error);
       }
@@ -114,6 +178,27 @@ export function useP2P() {
     };
   }, [isTransferring]);
 
+  // 处理页面可见性变化（锁屏、切换标签页）
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        console.log('[useP2P] Page hidden (locked/backgrounded)');
+        // 页面进入后台，WebRTC 和 WebSocket 连接可能会被暂停
+        // 信令服务器的心跳机制会自动处理重连
+      } else {
+        console.log('[useP2P] Page visible (unlocked/foregrounded)');
+        // 页面恢复前台，检查连接状态
+        // 如果连接断开，信令客户端会自动重连
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
   function setupEventListeners() {
     // 信令连接
     const onConnected = () => setConnected(true);
@@ -140,10 +225,42 @@ export function useP2P() {
       setTransferProgress(progress);
     };
 
-    const onTransferCompleted = () => {
+    const onTransferCompleted = async () => {
+      console.log('[useP2P] Transfer completed');
       const downloadInfo = fileTransferManager.getDownloadInfo();
       if (downloadInfo) {
+        console.log('[useP2P] Download info:', {
+          filename: downloadInfo.filename,
+          size: downloadInfo.blob.size,
+          sizeMB: (downloadInfo.blob.size / 1024 / 1024).toFixed(2) + ' MB',
+        });
+
+        // 先设置下载状态（确保UI立即显示）
         setDownload(true, downloadInfo.filename);
+        console.log('[useP2P] Download state set, UI should show download button');
+
+        // 对于大文件（>500MB），不保存到IndexedDB（避免内存问题）
+        const sizeMB = downloadInfo.blob.size / 1024 / 1024;
+        const MAX_STORAGE_SIZE_MB = 500;
+
+        if (sizeMB <= MAX_STORAGE_SIZE_MB) {
+          // 保存文件到 IndexedDB（页面刷新后仍可下载）
+          try {
+            const file = new File([downloadInfo.blob], downloadInfo.filename, {
+              type: downloadInfo.blob.type || 'application/octet-stream',
+            });
+            await saveReceivedFile(file);
+            console.log('[useP2P] File saved to IndexedDB');
+          } catch (error) {
+            console.error('[useP2P] Failed to save received file to IndexedDB:', error);
+            // 保存失败不影响下载功能
+          }
+        } else {
+          console.log(`[useP2P] File too large (${sizeMB.toFixed(2)} MB), skipping IndexedDB storage`);
+          console.log('[useP2P] Note: File will be lost after page refresh');
+        }
+      } else {
+        console.error('[useP2P] No download info available!');
       }
       setTransferring(false);
     };

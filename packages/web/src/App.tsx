@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useP2P } from './hooks/useP2P';
 import { useAppStore } from './store';
 import { deviceManager, fileTransferManager } from '@meshkit/core';
+import { fileStorage } from './utils/FileStorage';
 
 function App() {
   useP2P();
@@ -81,8 +82,42 @@ function App() {
   };
 
   // 下载文件
-  const handleDownload = () => {
-    fileTransferManager.downloadFile();
+  const handleDownload = async () => {
+    // 先尝试从内存中下载（刚接收完的文件）
+    const downloadInfo = fileTransferManager.getDownloadInfo();
+    if (downloadInfo) {
+      fileTransferManager.downloadFile();
+      return;
+    }
+
+    // 如果内存中没有，从 IndexedDB 加载
+    try {
+      const lastFileId = localStorage.getItem('meshkit_last_file_id');
+      if (!lastFileId) {
+        console.error('[App] No file to download');
+        return;
+      }
+
+      const storedFile = await fileStorage.getFile(lastFileId);
+      if (!storedFile) {
+        console.error('[App] File not found in storage');
+        return;
+      }
+
+      // 创建下载链接
+      const url = URL.createObjectURL(storedFile.blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = storedFile.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      console.log('[App] File downloaded from IndexedDB:', storedFile.filename);
+    } catch (error) {
+      console.error('[App] Failed to download file:', error);
+    }
   };
 
   // 选择设备
@@ -275,13 +310,17 @@ function App() {
             {hasDownload && (
               <div className="bg-gradient-to-r from-green-500 to-green-600 text-white p-6 rounded-xl text-center">
                 <h2 className="text-2xl font-bold mb-2">✅ 文件接收完成！</h2>
-                <p className="mb-4">{downloadFilename}</p>
+                <p className="mb-2">{downloadFilename}</p>
+                <p className="text-sm mb-4 opacity-90">📥 文件已自动开始下载</p>
                 <button
                   onClick={handleDownload}
                   className="bg-white text-green-600 px-8 py-3 rounded-lg font-bold hover:bg-gray-100 transition-all"
                 >
-                  ⬇️ 下载文件
+                  ⬇️ 点击下载文件
                 </button>
+                <p className="text-xs mt-3 opacity-75">
+                  💡 如果下载未开始，请点击上方按钮
+                </p>
               </div>
             )}
           </div>
