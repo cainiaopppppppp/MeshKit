@@ -2,7 +2,7 @@
  * Zustand Store - 应用状态管理
  */
 import { create } from 'zustand';
-import type { Device, FileMetadata, TransferProgress } from '@meshkit/core';
+import type { Device, FileMetadata, TransferProgress, Room, RoomMember } from '@meshkit/core';
 
 interface AppState {
   // 连接状态
@@ -40,12 +40,27 @@ interface AppState {
   setDownload: (has: boolean, filename?: string) => void;
   setStreamingDownload: (streaming: boolean, filename?: string) => void;
 
-  // 当前模式
+  // 当前模式：点对点 or 房间模式
+  transferMode: 'p2p' | 'room';
+  setTransferMode: (mode: 'p2p' | 'room') => void;
+
+  // 旧的mode字段（发送/接收）
   mode: 'send' | 'receive';
   setMode: (mode: 'send' | 'receive') => void;
 
+  // 房间状态
+  currentRoom: Room | null;
+  setCurrentRoom: (room: Room | null) => void;
+  updateRoomMembers: (members: RoomMember[]) => void;
+  updateMemberProgress: (deviceId: string, progress: number) => void;
+
+  // 广播传输进度（房间模式下每个成员的进度）
+  broadcastProgress: Record<string, number>; // deviceId -> progress
+  setBroadcastProgress: (progress: Record<string, number>) => void;
+
   // 重置
   reset: () => void;
+  resetRoom: () => void; // 重置房间状态
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -62,7 +77,10 @@ export const useAppStore = create<AppState>((set) => ({
   hasDownload: false,
   downloadFilename: '',
   isStreamingDownload: false,
+  transferMode: 'p2p',
   mode: 'send',
+  currentRoom: null,
+  broadcastProgress: {},
 
   // Actions
   setConnected: (connected) => set({ isConnected: connected }),
@@ -91,7 +109,40 @@ export const useAppStore = create<AppState>((set) => ({
   setStreamingDownload: (streaming, filename = '') =>
     set({ isStreamingDownload: streaming, downloadFilename: filename }),
 
+  setTransferMode: (mode) => set({ transferMode: mode }),
+
   setMode: (mode) => set({ mode }),
+
+  // 房间相关actions
+  setCurrentRoom: (room) => set({ currentRoom: room }),
+
+  updateRoomMembers: (members) =>
+    set((state) => ({
+      currentRoom: state.currentRoom
+        ? { ...state.currentRoom, members }
+        : null,
+    })),
+
+  updateMemberProgress: (deviceId, progress) =>
+    set((state) => {
+      if (!state.currentRoom) return state;
+
+      const updatedMembers = state.currentRoom.members.map((member) =>
+        member.deviceId === deviceId
+          ? { ...member, progress }
+          : member
+      );
+
+      return {
+        currentRoom: {
+          ...state.currentRoom,
+          members: updatedMembers,
+        },
+      };
+    }),
+
+  setBroadcastProgress: (progress) =>
+    set({ broadcastProgress: progress }),
 
   reset: () =>
     set({
@@ -103,5 +154,12 @@ export const useAppStore = create<AppState>((set) => ({
       downloadFilename: '',
       isStreamingDownload: false,
       selectedDeviceId: null,
+    }),
+
+  resetRoom: () =>
+    set({
+      currentRoom: null,
+      broadcastProgress: {},
+      transferMode: 'p2p',
     }),
 }));

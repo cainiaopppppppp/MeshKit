@@ -3,6 +3,8 @@ import { useP2P } from './hooks/useP2P';
 import { useAppStore } from './store';
 import { deviceManager, fileTransferManager } from '@meshkit/core';
 import { fileStorage } from './utils/FileStorage';
+import { RoomModeSelector } from './components/RoomModeSelector';
+import { RoomContainer } from './components/RoomContainer';
 
 function App() {
   useP2P();
@@ -19,6 +21,7 @@ function App() {
     downloadFilename,
     isStreamingDownload,
     mode,
+    transferMode,
     setMode,
     selectDevice,
     setCurrentFile,
@@ -188,91 +191,106 @@ function App() {
         {/* 发送模式 */}
         {mode === 'send' && (
           <div>
-            {/* 文件选择 */}
-            <div
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onClick={() => document.getElementById('fileInput')?.click()}
-              className={`border-3 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all mb-4 ${
-                dragOver
-                  ? 'border-green-400 bg-green-50'
-                  : 'border-gray-300 hover:border-primary-500 hover:bg-gray-50'
-              }`}
-            >
-              <div className="text-6xl mb-2">📁</div>
-              <p className="text-lg font-semibold">选择文件</p>
-              <p className="text-sm text-gray-500 mt-1">点击或拖拽文件到此处</p>
-              <input
-                id="fileInput"
-                type="file"
-                onChange={handleFileSelect}
-                className="hidden"
-              />
+            {/* 传输模式选择器 */}
+            <div className="mb-6">
+              <RoomModeSelector />
             </div>
 
-            {/* 文件信息 */}
-            {currentFile && (
-              <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4 rounded">
-                <p className="font-semibold">📄 已选择文件</p>
-                <p className="text-sm">文件名: {currentFile.name}</p>
-                <p className="text-sm">大小: {formatFileSize(currentFile.size)}</p>
-              </div>
-            )}
-
-            {/* 设备列表 */}
-            <div className="mb-4">
-              <h3 className="font-semibold mb-2">📱 附近的设备</h3>
-              {devices.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  <p>未发现其他设备</p>
-                  <p className="text-sm">请确保其他设备也打开了此页面</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {devices.map((device) => (
-                    <div
-                      key={device.id}
-                      onClick={() => handleSelectDevice(device.id)}
-                      className={`flex items-center gap-3 p-4 border-2 rounded-lg cursor-pointer transition-all ${
-                        selectedDeviceId === device.id
-                          ? 'border-primary-500 bg-primary-50'
-                          : 'border-gray-200 hover:border-primary-300'
-                      }`}
-                    >
-                      <span className="text-2xl">
-                        {device.name.includes('📱') ? '📱' : '💻'}
-                      </span>
-                      <span className="font-semibold">{device.name}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* 发送按钮 */}
-            <button
-              onClick={handleSendFile}
-              disabled={!currentFile || !selectedDeviceId || isTransferring}
-              className="w-full py-4 bg-gradient-to-r from-primary-500 to-secondary-500 text-white font-bold rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg transition-all"
-            >
-              📤 发送文件
-            </button>
-
-            {/* 发送进度 */}
-            {isTransferring && transferProgress && transferProgress.direction === 'send' && (
-              <div className="mt-4">
-                <div className="w-full bg-gray-200 rounded-full h-3 mb-2">
-                  <div
-                    className="bg-gradient-to-r from-primary-500 to-secondary-500 h-3 rounded-full transition-all"
-                    style={{ width: `${transferProgress.progress}%` }}
+            {/* 点对点模式 */}
+            {transferMode === 'p2p' && (
+              <>
+                {/* 文件选择 */}
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onClick={() => document.getElementById('fileInput')?.click()}
+                  className={`border-3 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all mb-4 ${
+                    dragOver
+                      ? 'border-green-400 bg-green-50'
+                      : 'border-gray-300 hover:border-primary-500 hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="text-6xl mb-2">📁</div>
+                  <p className="text-lg font-semibold">选择文件</p>
+                  <p className="text-sm text-gray-500 mt-1">点击或拖拽文件到此处</p>
+                  <input
+                    id="fileInput"
+                    type="file"
+                    onChange={handleFileSelect}
+                    className="hidden"
                   />
                 </div>
-                <div className="flex justify-between text-sm text-gray-600">
-                  <span>速度: {transferProgress.speedMB} MB/s</span>
-                  <span>剩余: {transferProgress.remainingTime}</span>
+
+                {/* 文件信息 */}
+                {currentFile && (
+                  <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4 rounded">
+                    <p className="font-semibold">📄 已选择文件</p>
+                    <p className="text-sm">文件名: {currentFile.name}</p>
+                    <p className="text-sm">大小: {formatFileSize(currentFile.size)}</p>
+                  </div>
+                )}
+
+                {/* 设备列表 */}
+                <div className="mb-4">
+                  <h3 className="font-semibold mb-2">📱 附近的设备</h3>
+                  {devices.length === 0 ? (
+                    <div className="text-center py-8 text-gray-500">
+                      <p>未发现其他设备</p>
+                      <p className="text-sm">请确保其他设备也打开了此页面</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {devices.map((device) => (
+                        <div
+                          key={device.id}
+                          onClick={() => handleSelectDevice(device.id)}
+                          className={`flex items-center gap-3 p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                            selectedDeviceId === device.id
+                              ? 'border-primary-500 bg-primary-50'
+                              : 'border-gray-200 hover:border-primary-300'
+                          }`}
+                        >
+                          <span className="text-2xl">
+                            {device.name.includes('📱') ? '📱' : '💻'}
+                          </span>
+                          <span className="font-semibold">{device.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
+
+                {/* 发送按钮 */}
+                <button
+                  onClick={handleSendFile}
+                  disabled={!currentFile || !selectedDeviceId || isTransferring}
+                  className="w-full py-4 bg-gradient-to-r from-primary-500 to-secondary-500 text-white font-bold rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg transition-all"
+                >
+                  📤 发送文件
+                </button>
+
+                {/* 发送进度 */}
+                {isTransferring && transferProgress && transferProgress.direction === 'send' && (
+                  <div className="mt-4">
+                    <div className="w-full bg-gray-200 rounded-full h-3 mb-2">
+                      <div
+                        className="bg-gradient-to-r from-primary-500 to-secondary-500 h-3 rounded-full transition-all"
+                        style={{ width: `${transferProgress.progress}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between text-sm text-gray-600">
+                      <span>速度: {transferProgress.speedMB} MB/s</span>
+                      <span>剩余: {transferProgress.remainingTime}</span>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* 房间模式 */}
+            {transferMode === 'room' && (
+              <RoomContainer />
             )}
           </div>
         )}
