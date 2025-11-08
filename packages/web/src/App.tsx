@@ -17,6 +17,7 @@ function App() {
     transferProgress,
     hasDownload,
     downloadFilename,
+    isStreamingDownload,
     mode,
     setMode,
     selectDevice,
@@ -292,6 +293,11 @@ function App() {
               <div>
                 <div className="text-center mb-4">
                   <p className="text-lg font-semibold">📥 正在接收...</p>
+                  {isStreamingDownload && (
+                    <p className="text-sm text-green-600 mt-2">
+                      ⚡ 流式下载中 - 无需等待即可保存
+                    </p>
+                  )}
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-3 mb-2">
                   <div
@@ -303,6 +309,13 @@ function App() {
                   <span>速度: {transferProgress.speedMB} MB/s</span>
                   <span>剩余: {transferProgress.remainingTime}</span>
                 </div>
+                {isStreamingDownload && (
+                  <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-xs text-blue-700">
+                      💡 <strong>提示:</strong> 大文件正在边传输边下载，节省手机内存
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 

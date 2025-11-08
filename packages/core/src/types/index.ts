@@ -109,4 +109,5 @@ export interface EventMap {
   'transfer:cancelled': { direction: TransferDirection };
   'transfer:downloaded': { filename: string; size: number };
   'transfer:download-blocked': { reason: string };
+  'transfer:download-started': { filename: string; streaming: boolean };
 }
