@@ -17,6 +17,120 @@ const wss = new WebSocket.Server({ server });
 // 存储所有连接的设备
 const devices = new Map();
 
+// 存储所有房间
+const rooms = new Map();
+
+/**
+ * 生成6位房间号
+ */
+function generateRoomId() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+/**
+ * 创建房间
+ */
+function createRoom(hostId, hostName, fileInfo) {
+  const roomId = generateRoomId();
+
+  const room = {
+    id: roomId,
+    name: `${hostName}的传输房间`,
+    hostId: hostId,
+    members: [{
+      deviceId: hostId,
+      deviceName: hostName,
+      role: 'host',
+      status: 'waiting',
+      joinedAt: Date.now(),
+    }],
+    createdAt: Date.now(),
+    fileInfo: fileInfo,
+    status: 'waiting'
+  };
+
+  rooms.set(roomId, room);
+  console.log(`🏠 房间创建: ${roomId} by ${hostName}`);
+
+  return room;
+}
+
+/**
+ * 加入房间
+ */
+function joinRoom(roomId, deviceId, deviceName) {
+  const room = rooms.get(roomId);
+
+  if (!room) {
+    throw new Error('房间不存在');
+  }
+
+  if (room.status !== 'waiting') {
+    throw new Error('房间已开始传输，无法加入');
+  }
+
+  // 检查是否已在房间中
+  const existingMember = room.members.find(m => m.deviceId === deviceId);
+  if (existingMember) {
+    return room; // 已在房间中，直接返回
+  }
+
+  // 添加成员
+  const member = {
+    deviceId: deviceId,
+    deviceName: deviceName,
+    role: 'member',
+    status: 'waiting',
+    joinedAt: Date.now(),
+  };
+
+  room.members.push(member);
+  console.log(`👤 ${deviceName} 加入房间 ${roomId}`);
+
+  return room;
+}
+
+/**
+ * 离开房间
+ */
+function leaveRoom(roomId, deviceId) {
+  const room = rooms.get(roomId);
+
+  if (!room) {
+    return;
+  }
+
+  // 如果是主持人离开，解散房间
+  if (room.hostId === deviceId) {
+    console.log(`🏠 房间解散: ${roomId} (主持人离开)`);
+    rooms.delete(roomId);
+    return { dissolved: true };
+  }
+
+  // 移除成员
+  room.members = room.members.filter(m => m.deviceId !== deviceId);
+  console.log(`👋 成员离开房间 ${roomId}`);
+
+  return { dissolved: false, room };
+}
+
+/**
+ * 广播房间更新到房间内所有成员
+ */
+function broadcastRoomUpdate(room) {
+  const message = JSON.stringify({
+    type: 'room-update',
+    room: room
+  });
+
+  room.members.forEach(member => {
+    const device = devices.get(member.deviceId);
+    if (device && device.ws.readyState === WebSocket.OPEN) {
+      device.ws.send(message);
+    }
+  });
+}
+
 wss.on('connection', (ws, req) => {
   const clientIp = req.socket.remoteAddress;
   console.log('✅ 新设备连接:', clientIp);
@@ -62,6 +176,84 @@ wss.on('connection', (ws, req) => {
             devices.get(deviceId).timestamp = Date.now();
           }
           break;
+
+        case 'create-room':
+          // 创建房间
+          try {
+            const room = createRoom(deviceId, data.deviceName, data.data.fileInfo);
+            ws.send(JSON.stringify({
+              type: 'room-update',
+              room: room
+            }));
+          } catch (error) {
+            ws.send(JSON.stringify({
+              type: 'room-error',
+              error: error.message
+            }));
+          }
+          break;
+
+        case 'join-room':
+          // 加入房间
+          try {
+            const room = joinRoom(data.roomId, deviceId, data.deviceName);
+            // 通知加入者
+            ws.send(JSON.stringify({
+              type: 'room-update',
+              room: room
+            }));
+            // 广播房间更新给所有成员
+            broadcastRoomUpdate(room);
+          } catch (error) {
+            ws.send(JSON.stringify({
+              type: 'room-error',
+              error: error.message
+            }));
+          }
+          break;
+
+        case 'leave-room':
+          // 离开房间
+          try {
+            const result = leaveRoom(data.roomId, deviceId);
+            if (result && result.dissolved) {
+              // 通知所有成员房间已解散
+              const room = rooms.get(data.roomId);
+              if (room) {
+                broadcastRoomUpdate({ ...room, status: 'dissolved' });
+              }
+            } else if (result && result.room) {
+              // 广播房间更新
+              broadcastRoomUpdate(result.room);
+            }
+          } catch (error) {
+            console.error('离开房间错误:', error);
+          }
+          break;
+
+        case 'start-broadcast':
+          // 开始群发传输
+          try {
+            const room = rooms.get(data.roomId);
+            if (!room) {
+              throw new Error('房间不存在');
+            }
+            if (room.hostId !== deviceId) {
+              throw new Error('只有主持人可以开始传输');
+            }
+
+            room.status = 'transferring';
+            console.log(`📤 开始群发: 房间 ${data.roomId}, 共 ${room.members.length} 个成员`);
+
+            // 广播开始传输
+            broadcastRoomUpdate(room);
+          } catch (error) {
+            ws.send(JSON.stringify({
+              type: 'room-error',
+              error: error.message
+            }));
+          }
+          break;
       }
     } catch (error) {
       console.error('❌ 消息处理错误:', error);
@@ -73,6 +265,18 @@ wss.on('connection', (ws, req) => {
       console.log(`👋 设备断开: ${deviceId}`);
       devices.delete(deviceId);
       broadcastDeviceList();
+
+      // 离开所有加入的房间
+      rooms.forEach((room, roomId) => {
+        const result = leaveRoom(roomId, deviceId);
+        if (result && result.dissolved) {
+          // 房间已解散
+          broadcastRoomUpdate({ ...room, status: 'dissolved' });
+        } else if (result && result.room) {
+          // 广播房间更新
+          broadcastRoomUpdate(result.room);
+        }
+      });
     }
   });
 
@@ -103,7 +307,7 @@ function broadcastDeviceList() {
   });
 }
 
-// 定期清理离线设备
+// 定期清理离线设备和过期房间
 setInterval(() => {
   const now = Date.now();
   let cleaned = false;
@@ -119,6 +323,14 @@ setInterval(() => {
   if (cleaned) {
     broadcastDeviceList();
   }
+
+  // 清理超过1小时的房间
+  rooms.forEach((room, roomId) => {
+    if (now - room.createdAt > 3600000) { // 1小时
+      console.log(`🧹 清理过期房间: ${roomId}`);
+      rooms.delete(roomId);
+    }
+  });
 }, 5000);
 
 // 获取本机IP地址

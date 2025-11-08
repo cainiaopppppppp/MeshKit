@@ -137,6 +137,12 @@ export class SignalingClient {
         // 转发WebRTC信令（暂时不实现，PeerJS内部处理）
         break;
 
+      case 'room-update':
+      case 'room-error':
+        // 触发通用的signaling:message事件，由RoomManager处理
+        eventBus.emit('signaling:message', { message });
+        break;
+
       default:
         console.log('[SignalingClient] Unknown message type:', message.type);
     }

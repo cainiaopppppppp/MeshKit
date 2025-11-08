@@ -19,6 +19,7 @@ export * from './utils';
 export { P2PManager, p2pManager } from './managers/P2PManager';
 export { DeviceManager, deviceManager } from './managers/DeviceManager';
 export { FileTransferManager, fileTransferManager } from './managers/FileTransferManager';
+export { RoomManager, roomManager } from './managers/RoomManager';
 
 // 服务
 export { SignalingClient, signalingClient } from './services/SignalingClient';
@@ -27,6 +28,7 @@ export { SignalingClient, signalingClient } from './services/SignalingClient';
 import { DeviceManager, deviceManager } from './managers/DeviceManager';
 import { p2pManager } from './managers/P2PManager';
 import { fileTransferManager } from './managers/FileTransferManager';
+import { roomManager } from './managers/RoomManager';
 import { signalingClient } from './services/SignalingClient';
 
 /**
@@ -48,6 +50,9 @@ export async function initCore(deviceId?: string, deviceName?: string) {
 
   // 初始化P2P管理器
   await p2pManager.init(finalDeviceId);
+
+  // 初始化房间管理器
+  roomManager.init(finalDeviceId, finalDeviceName);
 
   console.log('[@p2p-transfer/core] Initialized', {
     deviceId: finalDeviceId,

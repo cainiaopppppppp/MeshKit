@@ -16,6 +16,31 @@ export interface FileMetadata {
   totalChunks?: number;
 }
 
+/**
+ * 房间成员
+ */
+export interface RoomMember {
+  deviceId: string;
+  deviceName: string;
+  role: 'host' | 'member';
+  status: 'waiting' | 'receiving' | 'completed' | 'failed';
+  joinedAt: number;
+  progress?: number; // 传输进度 0-100
+}
+
+/**
+ * 传输房间
+ */
+export interface Room {
+  id: string; // 6位房间号
+  name: string; // 房间名称
+  hostId: string; // 创建者设备ID
+  members: RoomMember[]; // 成员列表（包含创建者）
+  createdAt: number;
+  fileInfo?: FileMetadata; // 待传输的文件信息
+  status: 'waiting' | 'transferring' | 'completed';
+}
+
 export interface TransferProgress {
   direction: 'send' | 'receive';
   progress: number;
@@ -54,13 +79,18 @@ export interface P2PConfig {
 }
 
 export interface SignalingMessage {
-  type: 'register' | 'device-list' | 'offer' | 'answer' | 'ice-candidate' | 'heartbeat';
+  type: 'register' | 'device-list' | 'offer' | 'answer' | 'ice-candidate' | 'heartbeat'
+      | 'create-room' | 'join-room' | 'leave-room' | 'room-update' | 'start-broadcast' | 'room-error';
   deviceId?: string;
   deviceName?: string;
   devices?: Device[];
   target?: string;
   from?: string;
   data?: any;
+  // 房间相关字段
+  roomId?: string;
+  room?: Room;
+  error?: string;
 }
 
 export interface ChunkData {
@@ -85,6 +115,7 @@ export interface EventMap {
   'signaling:disconnected': void;
   'signaling:error': { error: Error };
   'signaling:device-list': { devices: Device[] };
+  'signaling:message': { message: SignalingMessage };
 
   // P2P events
   'p2p:initialized': { deviceId: string };
@@ -104,10 +135,22 @@ export interface EventMap {
   'transfer:preparing': { direction: TransferDirection; file: FileMetadata };
   'transfer:started': { direction: TransferDirection; file: FileMetadata };
   'transfer:progress': TransferProgress;
+  'transfer:broadcast-progress': { memberProgress: Record<string, number>; avgProgress: number };
   'transfer:completed': { direction: TransferDirection; duration: number; avgSpeed: number };
   'transfer:error': { error: Error; direction: TransferDirection };
   'transfer:cancelled': { direction: TransferDirection };
   'transfer:downloaded': { filename: string; size: number };
   'transfer:download-blocked': { reason: string };
   'transfer:download-started': { filename: string; streaming: boolean };
+
+  // Room events
+  'room:created': { room: Room };
+  'room:joined': { room: Room };
+  'room:left': void;
+  'room:updated': { room: Room };
+  'room:member-joined': { member: RoomMember };
+  'room:member-left': { deviceId: string };
+  'room:broadcast-started': { fileInfo: FileMetadata };
+  'room:member-progress': { deviceId: string; progress: number };
+  'room:error': { error: string };
 }
