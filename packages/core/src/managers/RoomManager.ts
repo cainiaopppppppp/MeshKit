@@ -43,20 +43,26 @@ export class RoomManager {
 
   /**
    * 创建房间（发送方）
+   * 支持单文件和多文件模式
    */
-  async createRoom(fileInfo: FileMetadata): Promise<Room> {
+  async createRoom(fileInfo: FileMetadata, fileList?: FileMetadata[]): Promise<Room> {
     if (!this.myDeviceId || !this.myDeviceName) {
       throw new Error('设备未初始化');
     }
 
-    console.log('[RoomManager] 创建房间...', fileInfo);
+    const isMultiFile = fileList && fileList.length > 1;
+    console.log('[RoomManager] 创建房间...', isMultiFile ? `多文件模式 (${fileList.length} 个文件)` : '单文件模式', fileInfo);
 
     // 发送创建房间请求到信令服务器
     signalingClient.send({
       type: 'create-room',
       deviceId: this.myDeviceId!,
       deviceName: this.myDeviceName!,
-      data: { fileInfo }
+      data: {
+        fileInfo,
+        fileList: isMultiFile ? fileList : undefined,
+        isMultiFile
+      }
     });
 
     // 等待房间创建成功（通过room-update事件）

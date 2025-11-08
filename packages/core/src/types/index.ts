@@ -17,6 +17,24 @@ export interface FileMetadata {
 }
 
 /**
+ * 文件队列项状态
+ */
+export type FileQueueStatus = 'pending' | 'transferring' | 'completed' | 'skipped' | 'failed';
+
+/**
+ * 文件队列项
+ */
+export interface FileQueueItem {
+  file: File;
+  index: number;
+  metadata: FileMetadata;
+  status: FileQueueStatus;
+  progress: number;
+  selected: boolean; // 是否被接收方选中
+  error?: string;
+}
+
+/**
  * 房间成员
  */
 export interface RoomMember {
@@ -37,7 +55,9 @@ export interface Room {
   hostId: string; // 创建者设备ID
   members: RoomMember[]; // 成员列表（包含创建者）
   createdAt: number;
-  fileInfo?: FileMetadata; // 待传输的文件信息
+  fileInfo?: FileMetadata; // 待传输的文件信息（单文件模式）
+  fileList?: FileMetadata[]; // 待传输的文件列表（多文件模式）
+  isMultiFile?: boolean; // 是否为多文件模式
   status: 'waiting' | 'transferring' | 'completed';
 }
 
@@ -94,7 +114,7 @@ export interface SignalingMessage {
 }
 
 export interface ChunkData {
-  type: 'metadata' | 'chunk' | 'complete' | 'ack';
+  type: 'metadata' | 'chunk' | 'complete' | 'ack' | 'file-list' | 'file-selection' | 'start-file' | 'queue-complete';
   name?: string;
   size?: number;
   mimeType?: string;
@@ -103,6 +123,12 @@ export interface ChunkData {
   data?: ArrayBuffer;
   // ACK相关字段
   ackIndex?: number; // 确认的chunk索引
+  // 多文件传输字段
+  files?: FileMetadata[]; // 文件列表
+  totalSize?: number; // 总大小
+  selectedIndexes?: number[]; // 选中的文件索引
+  fileIndex?: number; // 当前文件索引
+  queueIndex?: number; // 队列中的索引
 }
 
 export type TransferDirection = 'send' | 'receive';
@@ -142,6 +168,14 @@ export interface EventMap {
   'transfer:downloaded': { filename: string; size: number };
   'transfer:download-blocked': { reason: string };
   'transfer:download-started': { filename: string; streaming: boolean };
+
+  // 文件队列事件
+  'transfer:queue-updated': { queue: FileQueueItem[]; direction: 'send' | 'receive' | null };
+  'transfer:file-list-received': { files: FileMetadata[]; totalSize: number };
+  'transfer:file-item-started': { fileIndex: number; file: FileMetadata };
+  'transfer:file-item-completed': { fileIndex: number; file: FileMetadata };
+  'transfer:file-item-failed': { fileIndex: number; file: FileMetadata; error: Error };
+  'transfer:queue-completed': { totalFiles: number; successCount: number; failedCount: number };
 
   // Room events
   'room:created': { room: Room };

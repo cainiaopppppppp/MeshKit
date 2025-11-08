@@ -19,6 +19,23 @@ export class SignalingClient {
    * 连接到信令服务器
    */
   connect(url: string, deviceId: string, deviceName: string): void {
+    // 如果已经连接到相同的设备，跳过重复连接
+    if (this.ws && this.isConnected && this.deviceId === deviceId) {
+      console.log('[SignalingClient] Already connected with same device, skipping');
+      return;
+    }
+
+    // 如果存在旧连接，先断开
+    if (this.ws) {
+      console.log('[SignalingClient] Closing existing connection before reconnecting');
+      try {
+        this.ws.close();
+      } catch (e) {
+        // 忽略关闭错误
+      }
+      this.ws = null;
+    }
+
     this.deviceId = deviceId;
     this.deviceName = deviceName;
 
@@ -40,21 +57,35 @@ export class SignalingClient {
   private setupWebSocketEvents(): void {
     if (!this.ws) return;
 
-    this.ws.onopen = () => {
+    // 保存当前 WebSocket 引用，避免闭包问题
+    const ws = this.ws;
+
+    ws.onopen = () => {
+      // 确保这个回调对应的 WebSocket 仍然是当前活跃的连接
+      if (this.ws !== ws) {
+        console.log('[SignalingClient] Ignoring onopen from old connection');
+        return;
+      }
+
       console.log('[SignalingClient] Connected to signaling server');
       this.isConnected = true;
       this.reconnectAttempts = 0;
 
-      // 注册设备
-      this.register();
-
-      // 启动心跳
-      this.startHeartbeat();
+      // 延迟注册，确保 WebSocket 完全准备好
+      setTimeout(() => {
+        if (this.ws === ws && this.isConnected) {
+          this.register();
+          this.startHeartbeat();
+        }
+      }, 100);
 
       eventBus.emit('signaling:connected', undefined);
     };
 
-    this.ws.onmessage = (event: MessageEvent) => {
+    ws.onmessage = (event: MessageEvent) => {
+      // 确保消息来自当前活跃的连接
+      if (this.ws !== ws) return;
+
       try {
         const message: SignalingMessage = JSON.parse(event.data);
         this.handleMessage(message);
@@ -63,7 +94,13 @@ export class SignalingClient {
       }
     };
 
-    this.ws.onclose = () => {
+    ws.onclose = () => {
+      // 只处理当前活跃连接的关闭事件
+      if (this.ws !== ws) {
+        console.log('[SignalingClient] Ignoring onclose from old connection');
+        return;
+      }
+
       console.log('[SignalingClient] Disconnected from signaling server');
       this.isConnected = false;
       this.stopHeartbeat();
@@ -71,13 +108,14 @@ export class SignalingClient {
       eventBus.emit('signaling:disconnected', undefined);
 
       // 尝试重连
-      if (this.ws) {
-        const url = this.ws.url;
-        this.scheduleReconnect(url);
-      }
+      const url = ws.url;
+      this.scheduleReconnect(url);
     };
 
-    this.ws.onerror = (error: Event) => {
+    ws.onerror = (error: Event) => {
+      // 只处理当前活跃连接的错误
+      if (this.ws !== ws) return;
+
       console.error('[SignalingClient] WebSocket error:', error);
       eventBus.emit('signaling:error', { error: error as any });
     };

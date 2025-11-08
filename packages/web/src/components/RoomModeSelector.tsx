@@ -3,12 +3,18 @@
  * 点对点模式 vs 房间模式
  */
 import { useAppStore } from '../store';
+import { fileTransferManager } from '@meshkit/core';
 
 export function RoomModeSelector() {
-  const { transferMode, setTransferMode, isTransferring } = useAppStore();
+  const { transferMode, setTransferMode, isTransferring, setCurrentFile } = useAppStore();
 
   const handleModeChange = (mode: 'p2p' | 'room') => {
     if (isTransferring) return; // 传输中不允许切换
+
+    // 切换模式时清空文件选择
+    fileTransferManager.fullReset();
+    setCurrentFile(null);
+
     setTransferMode(mode);
   };
 
