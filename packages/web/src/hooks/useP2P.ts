@@ -93,6 +93,43 @@ async function saveReceivedFile(file: File): Promise<void> {
   }
 }
 
+/**
+ * 显示接收成功提醒
+ */
+function showReceiveSuccessNotification(filename: string): void {
+  // 检测是否支持通知API
+  if ('Notification' in window && Notification.permission === 'granted') {
+    // 已授权，直接显示通知
+    new Notification('✅ 文件接收完成！', {
+      body: `${filename} 已接收完成，文件已开始下载`,
+      icon: '/favicon.ico',
+      tag: 'file-receive-success',
+    });
+  } else if ('Notification' in window && Notification.permission !== 'denied') {
+    // 未授权，请求权限
+    Notification.requestPermission().then((permission) => {
+      if (permission === 'granted') {
+        new Notification('✅ 文件接收完成！', {
+          body: `${filename} 已接收完成，文件已开始下载`,
+          icon: '/favicon.ico',
+          tag: 'file-receive-success',
+        });
+      }
+    });
+  }
+
+  // 同时播放系统提示音（如果可用）
+  try {
+    const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBjB3ytjLkAcBaLnt56RZFApDo+Xyu2wfBT2Ky+/7hTcJFG7B6+2ocSEEKHvL797HiQgCQ4/T4O7GejwHE1O59+2kaRkFNHvD79+tkCcJD2TK7u+ylSUDK3vG6+isgCUKGWi65uqldRUHJH');
+    audio.volume = 0.3; // 降低音量
+    audio.play().catch(() => {
+      // 播放失败不影响功能
+    });
+  } catch {
+    // 音频播放失败不影响功能
+  }
+}
+
 export function useP2P() {
   const {
     setConnected,
@@ -226,43 +263,50 @@ export function useP2P() {
       setTransferProgress(progress);
     };
 
-    const onTransferCompleted = async () => {
-      console.log('[useP2P] Transfer completed');
-      const downloadInfo = fileTransferManager.getDownloadInfo();
-      if (downloadInfo) {
-        console.log('[useP2P] Download info:', {
-          filename: downloadInfo.filename,
-          size: downloadInfo.blob.size,
-          sizeMB: (downloadInfo.blob.size / 1024 / 1024).toFixed(2) + ' MB',
-        });
+    const onTransferCompleted = async ({ direction }: { direction: 'send' | 'receive' }) => {
+      console.log('[useP2P] Transfer completed:', direction);
 
-        // 先设置下载状态（确保UI立即显示）
-        setDownload(true, downloadInfo.filename);
-        console.log('[useP2P] Download state set, UI should show download button');
+      if (direction === 'receive') {
+        const downloadInfo = fileTransferManager.getDownloadInfo();
+        if (downloadInfo) {
+          console.log('[useP2P] Download info:', {
+            filename: downloadInfo.filename,
+            size: downloadInfo.blob.size,
+            sizeMB: (downloadInfo.blob.size / 1024 / 1024).toFixed(2) + ' MB',
+          });
 
-        // 对于大文件（>500MB），不保存到IndexedDB（避免内存问题）
-        const sizeMB = downloadInfo.blob.size / 1024 / 1024;
-        const MAX_STORAGE_SIZE_MB = 500;
+          // 先设置下载状态（确保UI立即显示）
+          setDownload(true, downloadInfo.filename);
+          console.log('[useP2P] Download state set, UI should show download button');
 
-        if (sizeMB <= MAX_STORAGE_SIZE_MB) {
-          // 保存文件到 IndexedDB（页面刷新后仍可下载）
-          try {
-            const file = new File([downloadInfo.blob], downloadInfo.filename, {
-              type: downloadInfo.blob.type || 'application/octet-stream',
-            });
-            await saveReceivedFile(file);
-            console.log('[useP2P] File saved to IndexedDB');
-          } catch (error) {
-            console.error('[useP2P] Failed to save received file to IndexedDB:', error);
-            // 保存失败不影响下载功能
+          // 显示接收成功提醒
+          showReceiveSuccessNotification(downloadInfo.filename);
+
+          // 对于大文件（>500MB），不保存到IndexedDB（避免内存问题）
+          const sizeMB = downloadInfo.blob.size / 1024 / 1024;
+          const MAX_STORAGE_SIZE_MB = 500;
+
+          if (sizeMB <= MAX_STORAGE_SIZE_MB) {
+            // 保存文件到 IndexedDB（页面刷新后仍可下载）
+            try {
+              const file = new File([downloadInfo.blob], downloadInfo.filename, {
+                type: downloadInfo.blob.type || 'application/octet-stream',
+              });
+              await saveReceivedFile(file);
+              console.log('[useP2P] File saved to IndexedDB');
+            } catch (error) {
+              console.error('[useP2P] Failed to save received file to IndexedDB:', error);
+              // 保存失败不影响下载功能
+            }
+          } else {
+            console.log(`[useP2P] File too large (${sizeMB.toFixed(2)} MB), skipping IndexedDB storage`);
+            console.log('[useP2P] Note: File will be lost after page refresh');
           }
         } else {
-          console.log(`[useP2P] File too large (${sizeMB.toFixed(2)} MB), skipping IndexedDB storage`);
-          console.log('[useP2P] Note: File will be lost after page refresh');
+          console.error('[useP2P] No download info available!');
         }
-      } else {
-        console.error('[useP2P] No download info available!');
       }
+
       setTransferring(false);
     };
 

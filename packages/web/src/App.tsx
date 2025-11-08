@@ -164,40 +164,40 @@ function App() {
           />
         </div>
 
-        {/* 模式切换 */}
-        <div className="flex gap-2 mb-6 bg-gray-100 p-1 rounded-lg">
-          <button
-            onClick={() => setMode('send')}
-            className={`flex-1 py-3 rounded-lg font-semibold transition-all ${
-              mode === 'send'
-                ? 'bg-white text-primary-500 shadow-md'
-                : 'text-gray-600'
-            }`}
-          >
-            📤 发送
-          </button>
-          <button
-            onClick={() => setMode('receive')}
-            className={`flex-1 py-3 rounded-lg font-semibold transition-all ${
-              mode === 'receive'
-                ? 'bg-white text-primary-500 shadow-md'
-                : 'text-gray-600'
-            }`}
-          >
-            📥 接收
-          </button>
+        {/* 传输模式选择器（顶层） */}
+        <div className="mb-6">
+          <RoomModeSelector />
         </div>
 
-        {/* 发送模式 */}
-        {mode === 'send' && (
+        {/* 点对点模式 */}
+        {transferMode === 'p2p' && (
           <div>
-            {/* 传输模式选择器 */}
-            <div className="mb-6">
-              <RoomModeSelector />
+            {/* 发送/接收选择 */}
+            <div className="flex gap-2 mb-6 bg-gray-100 p-1 rounded-lg">
+              <button
+                onClick={() => setMode('send')}
+                className={`flex-1 py-3 rounded-lg font-semibold transition-all ${
+                  mode === 'send'
+                    ? 'bg-white text-primary-500 shadow-md'
+                    : 'text-gray-600'
+                }`}
+              >
+                📤 发送
+              </button>
+              <button
+                onClick={() => setMode('receive')}
+                className={`flex-1 py-3 rounded-lg font-semibold transition-all ${
+                  mode === 'receive'
+                    ? 'bg-white text-primary-500 shadow-md'
+                    : 'text-gray-600'
+                }`}
+              >
+                📥 接收
+              </button>
             </div>
 
-            {/* 点对点模式 */}
-            {transferMode === 'p2p' && (
+            {/* 点对点发送模式 */}
+            {mode === 'send' && (
               <>
                 {/* 文件选择 */}
                 <div
@@ -288,73 +288,73 @@ function App() {
               </>
             )}
 
-            {/* 房间模式 */}
-            {transferMode === 'room' && (
-              <RoomContainer />
-            )}
-          </div>
-        )}
-
-        {/* 接收模式 */}
-        {mode === 'receive' && (
-          <div>
-            {!isTransferring && !hasDownload && (
-              <div className="text-center py-12">
-                <div className="text-6xl mb-4">📱</div>
-                <p className="text-lg font-semibold">等待接收文件</p>
-                <p className="text-sm text-gray-500 mt-2">设备已在线</p>
-              </div>
-            )}
-
-            {/* 接收进度 */}
-            {isTransferring && transferProgress && transferProgress.direction === 'receive' && (
+            {/* 点对点接收模式 */}
+            {mode === 'receive' && (
               <div>
-                <div className="text-center mb-4">
-                  <p className="text-lg font-semibold">📥 正在接收...</p>
-                  {isStreamingDownload && (
-                    <p className="text-sm text-green-600 mt-2">
-                      ⚡ 流式下载中 - 无需等待即可保存
-                    </p>
-                  )}
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-3 mb-2">
-                  <div
-                    className="bg-gradient-to-r from-green-500 to-blue-500 h-3 rounded-full transition-all"
-                    style={{ width: `${transferProgress.progress}%` }}
-                  />
-                </div>
-                <div className="flex justify-between text-sm text-gray-600">
-                  <span>速度: {transferProgress.speedMB} MB/s</span>
-                  <span>剩余: {transferProgress.remainingTime}</span>
-                </div>
-                {isStreamingDownload && (
-                  <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <p className="text-xs text-blue-700">
-                      💡 <strong>提示:</strong> 大文件正在边传输边下载，节省手机内存
+                {!isTransferring && !hasDownload && (
+                  <div className="text-center py-12">
+                    <div className="text-6xl mb-4">📱</div>
+                    <p className="text-lg font-semibold">等待接收文件</p>
+                    <p className="text-sm text-gray-500 mt-2">设备已在线</p>
+                  </div>
+                )}
+
+                {/* 接收进度 */}
+                {isTransferring && transferProgress && transferProgress.direction === 'receive' && (
+                  <div>
+                    <div className="text-center mb-4">
+                      <p className="text-lg font-semibold">📥 正在接收...</p>
+                      {isStreamingDownload && (
+                        <p className="text-sm text-green-600 mt-2">
+                          ⚡ 流式下载中 - 无需等待即可保存
+                        </p>
+                      )}
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-3 mb-2">
+                      <div
+                        className="bg-gradient-to-r from-green-500 to-blue-500 h-3 rounded-full transition-all"
+                        style={{ width: `${transferProgress.progress}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between text-sm text-gray-600">
+                      <span>速度: {transferProgress.speedMB} MB/s</span>
+                      <span>剩余: {transferProgress.remainingTime}</span>
+                    </div>
+                    {isStreamingDownload && (
+                      <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                        <p className="text-xs text-blue-700">
+                          💡 <strong>提示:</strong> 大文件正在边传输边下载，节省手机内存
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 下载 */}
+                {hasDownload && (
+                  <div className="bg-gradient-to-r from-green-500 to-green-600 text-white p-6 rounded-xl text-center">
+                    <h2 className="text-2xl font-bold mb-2">✅ 文件接收完成！</h2>
+                    <p className="mb-2">{downloadFilename}</p>
+                    <p className="text-sm mb-4 opacity-90">📥 文件已自动开始下载</p>
+                    <button
+                      onClick={handleDownload}
+                      className="bg-white text-green-600 px-8 py-3 rounded-lg font-bold hover:bg-gray-100 transition-all"
+                    >
+                      ⬇️ 点击下载文件
+                    </button>
+                    <p className="text-xs mt-3 opacity-75">
+                      💡 如果下载未开始，请点击上方按钮
                     </p>
                   </div>
                 )}
               </div>
             )}
-
-            {/* 下载 */}
-            {hasDownload && (
-              <div className="bg-gradient-to-r from-green-500 to-green-600 text-white p-6 rounded-xl text-center">
-                <h2 className="text-2xl font-bold mb-2">✅ 文件接收完成！</h2>
-                <p className="mb-2">{downloadFilename}</p>
-                <p className="text-sm mb-4 opacity-90">📥 文件已自动开始下载</p>
-                <button
-                  onClick={handleDownload}
-                  className="bg-white text-green-600 px-8 py-3 rounded-lg font-bold hover:bg-gray-100 transition-all"
-                >
-                  ⬇️ 点击下载文件
-                </button>
-                <p className="text-xs mt-3 opacity-75">
-                  💡 如果下载未开始，请点击上方按钮
-                </p>
-              </div>
-            )}
           </div>
+        )}
+
+        {/* 房间模式 */}
+        {transferMode === 'room' && (
+          <RoomContainer />
         )}
 
         {/* Footer */}
