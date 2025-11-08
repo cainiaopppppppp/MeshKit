@@ -64,13 +64,15 @@ export interface SignalingMessage {
 }
 
 export interface ChunkData {
-  type: 'metadata' | 'chunk' | 'complete';
+  type: 'metadata' | 'chunk' | 'complete' | 'ack';
   name?: string;
   size?: number;
   mimeType?: string;
   totalChunks?: number;
   index?: number;
   data?: ArrayBuffer;
+  // ACK相关字段
+  ackIndex?: number; // 确认的chunk索引
 }
 
 export type TransferDirection = 'send' | 'receive';
@@ -106,4 +108,5 @@ export interface EventMap {
   'transfer:error': { error: Error; direction: TransferDirection };
   'transfer:cancelled': { direction: TransferDirection };
   'transfer:downloaded': { filename: string; size: number };
+  'transfer:download-blocked': { reason: string };
 }

@@ -16,9 +16,12 @@ export class FileTransferManager {
   // 发送状态
   private sendConnection: DataConnection | null = null;
   private sendProgress: number = 0;
+  private pendingAcks: Map<number, (value: void) => void> = new Map(); // 等待ACK的Promise resolvers
+  private lastAckedIndex: number = -1; // 最后确认的chunk索引
 
   // 接收状态
   private receiveMetadata: FileMetadata | null = null;
+  private receiveConnection: DataConnection | null = null;
   private receiveChunks: Map<number, ArrayBuffer> = new Map(); // 使用Map存储，支持乱序
   private receivedChunkCount: number = 0;
   private receiveBlobParts: Blob[] = []; // 分批合并的Blob数组
@@ -52,6 +55,12 @@ export class FileTransferManager {
         if (conn) {
           this.sendConnection = conn;
           this.startSending();
+        }
+      } else if (direction === 'incoming') {
+        // 保存接收连接，用于发送ACK
+        const conn = p2pManager.getConnection(peer, 'incoming');
+        if (conn) {
+          this.receiveConnection = conn;
         }
       }
     });
@@ -240,8 +249,18 @@ export class FileTransferManager {
           data: chunk,
         } as ChunkData);
 
+        // 等待ACK确认（关键！确保接收方收到了）
+        try {
+          await this.waitForAck(i, 10000); // 10秒ACK超时
+        } catch (error) {
+          console.error(`[FileTransfer] ACK timeout for chunk ${i}:`, error);
+          throw error; // 传输失败
+        }
+
         this.transferredBytes += chunk.byteLength;
-        this.sendProgress = ((i + 1) / totalChunks) * 100;
+
+        // 基于ACK计算进度（更准确！）
+        this.sendProgress = ((this.lastAckedIndex + 1) / totalChunks) * 100;
 
         // 发送进度更新（每10个chunk或最后一个chunk）
         if (i % 10 === 0 || i === totalChunks - 1) {
@@ -334,20 +353,45 @@ export class FileTransferManager {
 
   /**
    * 背压控制：等待缓冲区排空
-   * WebRTC数据通道有16MB缓冲区限制
+   * WebRTC数据通道有16MB缓冲区限制，增强版本包含超时和日志
    */
   private async waitForBufferDrain(): Promise<void> {
     if (!this.sendConnection) return;
 
-    const MAX_BUFFER_SIZE = 8 * 1024 * 1024; // 8MB 阈值
+    const MAX_BUFFER_SIZE = 4 * 1024 * 1024; // 降低到4MB阈值，更保守
+    const MAX_WAIT_TIME = 30000; // 30秒超时
 
     // 访问底层的RTCDataChannel来获取bufferSize
     const dataChannel = (this.sendConnection as any).dataChannel;
     if (!dataChannel) return;
 
+    const startTime = Date.now();
+    let lastLogTime = startTime;
+
     while (dataChannel.bufferedAmount > MAX_BUFFER_SIZE) {
-      // 等待缓冲区排空
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      const elapsed = Date.now() - startTime;
+
+      // 超时检查
+      if (elapsed > MAX_WAIT_TIME) {
+        console.error('[FileTransfer] Buffer drain timeout!', {
+          bufferedAmount: dataChannel.bufferedAmount,
+          maxBufferSize: MAX_BUFFER_SIZE,
+          elapsedTime: elapsed,
+        });
+        throw new Error('Buffer drain timeout - connection may be stuck');
+      }
+
+      // 每5秒打印一次日志
+      if (Date.now() - lastLogTime > 5000) {
+        console.log('[FileTransfer] Waiting for buffer drain...', {
+          bufferedAmount: (dataChannel.bufferedAmount / 1024 / 1024).toFixed(2) + ' MB',
+          threshold: (MAX_BUFFER_SIZE / 1024 / 1024).toFixed(2) + ' MB',
+        });
+        lastLogTime = Date.now();
+      }
+
+      // 等待100ms，给缓冲区更多时间排空
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
 
@@ -373,6 +417,58 @@ export class FileTransferManager {
       clearTimeout(this.transferTimeout);
       this.transferTimeout = null;
     }
+  }
+
+  /**
+   * 发送ACK确认
+   */
+  private sendAck(chunkIndex: number): void {
+    if (!this.receiveConnection) {
+      console.warn('[FileTransfer] No receive connection to send ACK');
+      return;
+    }
+
+    try {
+      this.receiveConnection.send({
+        type: 'ack',
+        ackIndex: chunkIndex,
+      } as ChunkData);
+    } catch (error) {
+      console.error('[FileTransfer] Failed to send ACK:', error);
+    }
+  }
+
+  /**
+   * 处理ACK确认
+   */
+  private handleAck(chunkIndex: number): void {
+    this.lastAckedIndex = chunkIndex;
+
+    // 解决等待该ACK的Promise
+    const resolver = this.pendingAcks.get(chunkIndex);
+    if (resolver) {
+      resolver();
+      this.pendingAcks.delete(chunkIndex);
+    }
+  }
+
+  /**
+   * 等待ACK确认（带超时）
+   */
+  private async waitForAck(chunkIndex: number, timeoutMs: number = 10000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      // 设置超时
+      const timeout = setTimeout(() => {
+        this.pendingAcks.delete(chunkIndex);
+        reject(new Error(`ACK timeout for chunk ${chunkIndex}`));
+      }, timeoutMs);
+
+      // 保存resolver
+      this.pendingAcks.set(chunkIndex, () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
   }
 
   /**
@@ -417,6 +513,9 @@ export class FileTransferManager {
         this.receivedChunkCount++;
         this.transferredBytes += data.data.byteLength;
 
+        // 发送ACK确认（关键！让发送方知道已收到）
+        this.sendAck(data.index);
+
         // 尝试合并连续的chunks，避免内存溢出（关键优化！）
         this.tryMergeBatch();
 
@@ -427,6 +526,11 @@ export class FileTransferManager {
             this.emitProgress('receive', this.receiveMetadata.size);
           }
         }
+      }
+    } else if (data.type === 'ack') {
+      // 收到ACK确认
+      if (data.ackIndex !== undefined) {
+        this.handleAck(data.ackIndex);
       }
     } else if (data.type === 'complete') {
       // 接收完成
@@ -518,14 +622,22 @@ export class FileTransferManager {
       this.downloadBlob = blob;
       this.downloadFilename = this.receiveMetadata.name;
 
-      // 立即清理，释放内存
-      this.receiveChunks.clear();
-      this.receiveBlobParts = [];
-      this.nextBatchIndex = 0;
-
       console.log(`[FileTransfer] File assembled successfully: ${this.downloadFilename} (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
 
+      // 先触发完成事件（设置UI状态）
       this.handleTransferComplete('receive');
+
+      // 立即自动触发下载（关键改进！）
+      console.log('[FileTransfer] Auto-triggering download...');
+      setTimeout(() => {
+        this.downloadFile();
+
+        // 下载完成后清理内存
+        this.receiveChunks.clear();
+        this.receiveBlobParts = [];
+        this.nextBatchIndex = 0;
+      }, 500); // 延迟500ms，确保UI已更新
+
     } catch (error) {
       console.error('[FileTransfer] Failed to assemble file:', error);
       this.handleTransferError(error as Error);
@@ -595,7 +707,19 @@ export class FileTransferManager {
    */
   private downloadFileIOS(url: string): void {
     // iOS需要在新窗口打开，用户手动保存
-    window.open(url, '_blank');
+    // 注意：自动触发可能被浏览器拦截
+    try {
+      const newWindow = window.open(url, '_blank');
+      if (!newWindow) {
+        console.warn('[FileTransfer] Popup blocked - user needs to click download button');
+        // 弹窗被拦截，需要用户手动点击
+        eventBus.emit('transfer:download-blocked', {
+          reason: 'popup-blocked',
+        });
+      }
+    } catch (error) {
+      console.error('[FileTransfer] Failed to open download window:', error);
+    }
   }
 
   /**
