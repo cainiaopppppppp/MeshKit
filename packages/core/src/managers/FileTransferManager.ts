@@ -7,6 +7,8 @@ import { eventBus } from '../utils/EventBus';
 import { config } from '../utils/Config';
 import { p2pManager } from './P2PManager';
 import type { FileMetadata, ChunkData, TransferDirection } from '../types';
+// @ts-ignore - StreamSaver doesn't have types
+import streamSaver from 'streamsaver';
 
 export class FileTransferManager {
   private currentFile: File | null = null;
@@ -30,6 +32,10 @@ export class FileTransferManager {
   private downloadFilename: string = '';
   private readonly BATCH_SIZE = 100; // 每100个chunks合并一次（100MB）
 
+  // 流式下载状态
+  private streamWriter: WritableStreamDefaultWriter | null = null;
+  private isStreamingDownload: boolean = false;
+
   // 传输统计
   private transferStartTime: number = 0;
   private transferredBytes: number = 0;
@@ -37,6 +43,91 @@ export class FileTransferManager {
 
   constructor() {
     this.setupEventListeners();
+    this.configureStreamSaver();
+  }
+
+  /**
+   * 配置 StreamSaver
+   */
+  private configureStreamSaver(): void {
+    // 配置 mitm.html 和 sw.js 的路径（在 public 目录）
+    if (typeof window !== 'undefined') {
+      streamSaver.mitm = '/mitm.html';
+    }
+  }
+
+  /**
+   * 检测是否应该使用流式下载
+   * 仅在桌面端且超大文件（>2GB）时使用
+   *
+   * ⚠️ 重要：移动设备禁用流式下载
+   * - 手机性能不足，会导致卡机
+   * - StreamSaver的mitm.html在移动端有兼容性问题
+   * - 手机用户一般不会传输超大文件
+   */
+  private shouldUseStreamingDownload(fileSize: number): boolean {
+    // 检测移动设备
+    const isMobile = typeof navigator !== 'undefined' &&
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+    // ⚠️ 移动设备禁用流式下载（避免卡机）
+    if (isMobile) {
+      console.log('[FileTransfer] Mobile device detected - streaming download disabled');
+      return false;
+    }
+
+    // 仅桌面端且超大文件（>2GB）使用流式下载
+    const isVeryLargeFile = fileSize > 2 * 1024 * 1024 * 1024; // 2GB
+
+    // 检查浏览器是否支持 WritableStream
+    const supportsStreams = typeof WritableStream !== 'undefined';
+
+    if (isVeryLargeFile && supportsStreams) {
+      console.log('[FileTransfer] Desktop + very large file (>2GB) - enabling streaming download');
+      return true;
+    }
+
+    console.log('[FileTransfer] Using standard download (file size or platform not suitable for streaming)');
+    return false;
+  }
+
+  /**
+   * 初始化流式下载
+   * 立即创建下载流，边接收边写入
+   */
+  private initStreamingDownload(filename: string, fileSize: number): void {
+    try {
+      console.log(`[FileTransfer] 🚀 Initializing streaming download for ${filename}`);
+      console.log(`[FileTransfer] File size: ${(fileSize / 1024 / 1024).toFixed(2)} MB`);
+
+      // 使用 StreamSaver 创建可写流
+      const fileStream = streamSaver.createWriteStream(filename, {
+        size: fileSize, // 提供文件大小有助于浏览器显示准确的进度
+      });
+
+      this.streamWriter = fileStream.getWriter();
+
+      if (!this.streamWriter) {
+        throw new Error('Failed to get stream writer');
+      }
+
+      // 立即触发下载对话框/开始下载
+      console.log('[FileTransfer] ✅ Download stream created successfully');
+      console.log('[FileTransfer] 📥 Browser should now prompt for download location');
+
+      // 通知UI下载已开始（流式）
+      eventBus.emit('transfer:download-started', {
+        filename: filename,
+        streaming: true,
+      });
+
+    } catch (error) {
+      console.error('[FileTransfer] ❌ Failed to initialize streaming download:', error);
+      // 降级到标准下载
+      console.warn('[FileTransfer] ⚠️ Falling back to standard download mode');
+      this.isStreamingDownload = false;
+      this.streamWriter = null;
+    }
   }
 
   /**
@@ -474,7 +565,7 @@ export class FileTransferManager {
   /**
    * 处理接收数据
    */
-  private handleIncomingData(data: ChunkData): void {
+  private async handleIncomingData(data: ChunkData): Promise<void> {
     if (data.type === 'metadata') {
       // 接收元数据
       this.receiveMetadata = {
@@ -498,6 +589,16 @@ export class FileTransferManager {
 
       console.log(`[FileTransfer] Receiving ${data.name} (${(data.size! / 1024 / 1024).toFixed(2)} MB) in ${data.totalChunks} chunks`);
 
+      // 检测是否使用流式下载
+      this.isStreamingDownload = this.shouldUseStreamingDownload(data.size!);
+
+      if (this.isStreamingDownload) {
+        console.log('[FileTransfer] ✅ Using streaming download (mobile device or large file)');
+        this.initStreamingDownload(data.name!, data.size!);
+      } else {
+        console.log('[FileTransfer] Using standard download (buffered in memory)');
+      }
+
       eventBus.emit('transfer:started', {
         direction: 'receive',
         file: {
@@ -517,7 +618,8 @@ export class FileTransferManager {
         this.sendAck(data.index);
 
         // 尝试合并连续的chunks，避免内存溢出（关键优化！）
-        this.tryMergeBatch();
+        // 关键修复：必须await，确保流式写入完成
+        await this.tryMergeBatch();
 
         // 发送进度更新（每10个chunk或接近完成）
         if (this.receiveMetadata) {
@@ -534,17 +636,19 @@ export class FileTransferManager {
       }
     } else if (data.type === 'complete') {
       // 接收完成
-      console.log('[FileTransfer] Receive completed');
+      console.log('[FileTransfer] Receive completed, assembling file...');
       this.clearTransferTimeout();
-      this.assembleReceivedFile();
+      // 关键修复：必须await，确保流关闭完成
+      await this.assembleReceivedFile();
     }
   }
 
   /**
    * 尝试合并批次chunks
    * 检查是否有连续的BATCH_SIZE个chunks可以合并
+   * 如果是流式下载，直接写入流；否则缓存在内存
    */
-  private tryMergeBatch(): void {
+  private async tryMergeBatch(): Promise<void> {
     if (!this.receiveMetadata) return;
 
     // 收集从nextBatchIndex开始的连续chunks
@@ -570,7 +674,26 @@ export class FileTransferManager {
         const batchBlob = new Blob(batchChunks, {
           type: this.receiveMetadata.type,
         });
-        this.receiveBlobParts.push(batchBlob);
+
+        // 流式下载模式：直接写入流
+        if (this.isStreamingDownload && this.streamWriter) {
+          console.log(`[FileTransfer] 💾 Writing batch ${(batchBlob.size / 1024 / 1024).toFixed(2)} MB to download stream...`);
+
+          try {
+            // 转换Blob为Uint8Array并写入流
+            const arrayBuffer = await batchBlob.arrayBuffer();
+            const bytes = new Uint8Array(arrayBuffer);
+            await this.streamWriter.write(bytes);
+
+            console.log(`[FileTransfer] ✅ Batch written successfully (chunks ${this.nextBatchIndex} to ${index - 1})`);
+          } catch (error) {
+            console.error('[FileTransfer] ❌ Failed to write batch to stream:', error);
+            throw error;
+          }
+        } else {
+          // 标准模式：缓存在内存
+          this.receiveBlobParts.push(batchBlob);
+        }
 
         // 删除已合并的chunks，释放内存
         for (let i = this.nextBatchIndex; i < index; i++) {
@@ -579,20 +702,87 @@ export class FileTransferManager {
 
         this.nextBatchIndex = index;
 
-        console.log(`[FileTransfer] Memory freed: ${batchChunks.length} chunks, Map size now: ${this.receiveChunks.size}`);
+        console.log(`[FileTransfer] 🧹 Memory freed: ${batchChunks.length} chunks, Map size now: ${this.receiveChunks.size}`);
       } catch (error) {
         console.error('[FileTransfer] Failed to merge batch:', error);
+
+        // 如果流式写入失败，降级到标准模式
+        if (this.isStreamingDownload) {
+          console.warn('[FileTransfer] Streaming failed, falling back to standard download');
+          this.isStreamingDownload = false;
+          if (this.streamWriter) {
+            try {
+              await this.streamWriter.abort();
+            } catch (e) {
+              // ignore
+            }
+            this.streamWriter = null;
+          }
+        }
       }
     }
   }
 
   /**
    * 组装接收的文件（优化内存使用）
+   * 流式下载模式：关闭流
+   * 标准模式：合并所有blob并触发下载
    */
-  private assembleReceivedFile(): void {
+  private async assembleReceivedFile(): Promise<void> {
     if (!this.receiveMetadata) return;
 
     try {
+      // 流式下载模式：写入剩余chunks并关闭流
+      if (this.isStreamingDownload && this.streamWriter) {
+        console.log('[FileTransfer] 📦 Finalizing streaming download...');
+        console.log(`[FileTransfer] Next batch index: ${this.nextBatchIndex}, Total chunks: ${this.receiveMetadata.totalChunks}`);
+
+        // 写入剩余的chunks
+        const remainingChunks: ArrayBuffer[] = [];
+        for (let i = this.nextBatchIndex; i < this.receiveMetadata.totalChunks!; i++) {
+          const chunk = this.receiveChunks.get(i);
+          if (!chunk) {
+            console.error(`[FileTransfer] ❌ Missing chunk at index ${i}`);
+            throw new Error(`Missing chunk at index ${i}`);
+          }
+          remainingChunks.push(chunk);
+        }
+
+        if (remainingChunks.length > 0) {
+          console.log(`[FileTransfer] ✍️ Writing final ${remainingChunks.length} chunks to stream...`);
+          const finalBlob = new Blob(remainingChunks, {
+            type: this.receiveMetadata.type,
+          });
+          const arrayBuffer = await finalBlob.arrayBuffer();
+          const bytes = new Uint8Array(arrayBuffer);
+          console.log(`[FileTransfer] Final batch size: ${(bytes.length / 1024 / 1024).toFixed(2)} MB`);
+
+          await this.streamWriter.write(bytes);
+          console.log('[FileTransfer] ✅ Final batch written successfully');
+        } else {
+          console.log('[FileTransfer] No remaining chunks to write');
+        }
+
+        // 关闭流，完成下载
+        console.log('[FileTransfer] 🔒 Closing download stream...');
+        await this.streamWriter.close();
+        console.log('[FileTransfer] ✅ Stream closed successfully');
+        this.streamWriter = null;
+
+        console.log('[FileTransfer] 🎉 Streaming download completed successfully!');
+        console.log(`[FileTransfer] File: ${this.receiveMetadata.name} (${(this.receiveMetadata.size / 1024 / 1024).toFixed(2)} MB)`);
+
+        // 清理内存
+        this.receiveChunks.clear();
+        this.nextBatchIndex = 0;
+
+        // 触发完成事件
+        this.handleTransferComplete('receive');
+
+        return;
+      }
+
+      // 标准模式：合并所有blob
       console.log(`[FileTransfer] Assembling file from ${this.receiveBlobParts.length} blob parts`);
 
       // 合并剩余的chunks
@@ -640,6 +830,17 @@ export class FileTransferManager {
 
     } catch (error) {
       console.error('[FileTransfer] Failed to assemble file:', error);
+
+      // 如果是流式下载出错，尝试中止流
+      if (this.streamWriter) {
+        try {
+          await this.streamWriter.abort();
+        } catch (e) {
+          // ignore
+        }
+        this.streamWriter = null;
+      }
+
       this.handleTransferError(error as Error);
     }
   }
@@ -814,8 +1015,20 @@ export class FileTransferManager {
   /**
    * 重置状态
    */
-  private reset(): void {
+  private async reset(): Promise<void> {
     this.clearTransferTimeout();
+
+    // 清理流式下载
+    if (this.streamWriter) {
+      try {
+        await this.streamWriter.abort();
+      } catch (e) {
+        // ignore
+      }
+      this.streamWriter = null;
+    }
+    this.isStreamingDownload = false;
+
     this.isTransferring = false;
     this.transferDirection = null;
     this.sendConnection = null;

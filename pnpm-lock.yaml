@@ -32,6 +32,9 @@ importers:
       peerjs:
         specifier: ^1.5.2
         version: 1.5.5
+      streamsaver:
+        specifier: ^2.0.6
+        version: 2.0.6
     devDependencies:
       '@types/node':
         specifier: ^20.10.0
@@ -1936,6 +1939,10 @@ packages:
     dependencies:
       whatwg-url: 7.1.0
     dev: true
+
+  /streamsaver@2.0.6:
+    resolution: {integrity: sha512-LK4e7TfCV8HzuM0PKXuVUfKyCB1FtT9L0EGxsFk5Up8njj0bXK8pJM9+Wq2Nya7/jslmCQwRK39LFm55h7NBTw==}
+    dev: false
 
   /string-width@4.2.3:
     resolution: {integrity: sha512-wKyQRQpjJ0sIp62ErSZdGsjMJWsap5oRNihHhu6G7JVO/9jIB6UyevL+tXuOqrng8j/cxKTWyWUwvSTriiZz/g==}

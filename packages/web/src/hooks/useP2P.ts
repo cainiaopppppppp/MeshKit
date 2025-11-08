@@ -101,6 +101,7 @@ export function useP2P() {
     setTransferring,
     setTransferProgress,
     setDownload,
+    setStreamingDownload,
     reset,
     isTransferring,
   } = useAppStore();
@@ -270,6 +271,13 @@ export function useP2P() {
       reset();
     };
 
+    const onDownloadStarted = ({ filename, streaming }: { filename: string; streaming: boolean }) => {
+      console.log('[useP2P] Download started:', { filename, streaming });
+      if (streaming) {
+        setStreamingDownload(true, filename);
+      }
+    };
+
     // 订阅事件
     eventBus.on('signaling:connected', onConnected);
     eventBus.on('signaling:disconnected', onDisconnected);
@@ -279,6 +287,7 @@ export function useP2P() {
     eventBus.on('transfer:progress', onTransferProgress);
     eventBus.on('transfer:completed', onTransferCompleted);
     eventBus.on('transfer:error', onTransferError);
+    eventBus.on('transfer:download-started', onDownloadStarted);
 
     // 返回清理函数
     return () => {
@@ -290,6 +299,7 @@ export function useP2P() {
       eventBus.off('transfer:progress', onTransferProgress);
       eventBus.off('transfer:completed', onTransferCompleted);
       eventBus.off('transfer:error', onTransferError);
+      eventBus.off('transfer:download-started', onDownloadStarted);
     };
   }
 }

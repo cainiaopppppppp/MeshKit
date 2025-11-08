@@ -36,7 +36,9 @@ interface AppState {
   // 下载信息
   hasDownload: boolean;
   downloadFilename: string;
+  isStreamingDownload: boolean; // 是否正在使用流式下载
   setDownload: (has: boolean, filename?: string) => void;
+  setStreamingDownload: (streaming: boolean, filename?: string) => void;
 
   // 当前模式
   mode: 'send' | 'receive';
@@ -59,6 +61,7 @@ export const useAppStore = create<AppState>((set) => ({
   transferProgress: null,
   hasDownload: false,
   downloadFilename: '',
+  isStreamingDownload: false,
   mode: 'send',
 
   // Actions
@@ -85,6 +88,9 @@ export const useAppStore = create<AppState>((set) => ({
   setDownload: (has, filename = '') =>
     set({ hasDownload: has, downloadFilename: filename }),
 
+  setStreamingDownload: (streaming, filename = '') =>
+    set({ isStreamingDownload: streaming, downloadFilename: filename }),
+
   setMode: (mode) => set({ mode }),
 
   reset: () =>
@@ -95,6 +101,7 @@ export const useAppStore = create<AppState>((set) => ({
       transferProgress: null,
       hasDownload: false,
       downloadFilename: '',
+      isStreamingDownload: false,
       selectedDeviceId: null,
     }),
 }));
