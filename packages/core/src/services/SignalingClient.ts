@@ -177,6 +177,7 @@ export class SignalingClient {
 
       case 'room-update':
       case 'room-error':
+      case 'file-request':
         // 触发通用的signaling:message事件，由RoomManager处理
         eventBus.emit('signaling:message', { message });
         break;

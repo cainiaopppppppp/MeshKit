@@ -122,42 +122,37 @@ export function CreateRoom() {
 
   return (
     <div className="create-room">
-      <h3 className="section-title">📤 创建传输房间</h3>
-
-      {/* 拖拽选择文件区域 */}
-      <div
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        onClick={() => fileInputRef.current?.click()}
-        className={`border-3 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all mb-4 ${
-          dragOver
-            ? 'border-green-400 bg-green-50'
-            : 'border-gray-300 hover:border-primary-500 hover:bg-gray-50'
-        }`}
-      >
-        <div className="text-6xl mb-2">📁</div>
-        <p className="text-lg font-semibold">
-          {selectedFile || isQueueMode ? '更换文件' : '选择文件'}
-        </p>
-        <p className="text-sm text-gray-500 mt-1">点击或拖拽文件到此处</p>
-        <p className="text-xs text-gray-400 mt-1">💡 支持多文件选择</p>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          onChange={handleFileSelect}
-          className="hidden"
-          id="room-file-input"
-        />
-      </div>
+      {/* 文件选择区域 - 仅在没有文件时显示 */}
+      {!selectedFile && !isQueueMode && (
+        <div
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          onClick={() => fileInputRef.current?.click()}
+          className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all mb-4 ${
+            dragOver
+              ? 'border-blue-400 bg-blue-50'
+              : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'
+          }`}
+        >
+          <p className="text-lg font-medium text-gray-700 mb-1">选择文件</p>
+          <p className="text-sm text-gray-500">点击或拖拽文件到此处</p>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            onChange={handleFileSelect}
+            className="hidden"
+            id="room-file-input"
+          />
+        </div>
+      )}
 
       {/* 单文件信息 */}
       {!isQueueMode && selectedFile && (
-        <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4 rounded">
-          <p className="font-semibold">📄 已选择文件</p>
-          <p className="text-sm">文件名: {selectedFile.name}</p>
-          <p className="text-sm">大小: {formatFileSize(selectedFile.size)}</p>
+        <div className="bg-gray-50 border border-gray-200 p-4 mb-4 rounded-lg">
+          <p className="font-medium text-gray-900 mb-1">{selectedFile.name}</p>
+          <p className="text-sm text-gray-600">{formatFileSize(selectedFile.size)}</p>
         </div>
       )}
 
@@ -171,15 +166,34 @@ export function CreateRoom() {
       {/* 文件操作按钮 */}
       {(selectedFile || isQueueMode) && (
         <div className="flex gap-2 mb-4">
-          {/* 添加文件按钮 */}
+          {/* 更换文件按钮 */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              fileInputRef.current?.click();
+            }}
+            className="flex-1 py-2 px-4 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-all border border-gray-300"
+          >
+            更换文件
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            onChange={handleFileSelect}
+            className="hidden"
+            id="room-file-input"
+          />
+
+          {/* 继续添加按钮 */}
           <button
             onClick={(e) => {
               e.stopPropagation();
               document.getElementById('room-add-files-input')?.click();
             }}
-            className="flex-1 py-3 px-4 bg-blue-100 text-blue-700 font-semibold rounded-lg hover:bg-blue-200 transition-all"
+            className="flex-1 py-2 px-4 bg-blue-500 text-white font-medium rounded-lg hover:bg-blue-600 transition-all"
           >
-            ➕ 添加文件
+            添加文件
           </button>
           <input
             type="file"
@@ -189,35 +203,29 @@ export function CreateRoom() {
             id="room-add-files-input"
           />
 
-          {/* 清空全部按钮 */}
+          {/* 清空按钮 */}
           <button
             onClick={handleClearAll}
-            className="flex-1 py-3 px-4 bg-red-100 text-red-700 font-semibold rounded-lg hover:bg-red-200 transition-all"
+            className="flex-1 py-2 px-4 bg-red-500 text-white font-medium rounded-lg hover:bg-red-600 transition-all"
           >
-            🗑️ 清空全部
+            清空
           </button>
         </div>
       )}
 
       {error && (
-        <div className="error-message">
-          ❌ {error}
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
+          {error}
         </div>
       )}
 
       <button
-        className="create-room-button"
+        className="w-full py-3 bg-blue-500 text-white font-medium rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
         onClick={handleCreateRoom}
         disabled={(!selectedFile && !isQueueMode) || isCreating}
       >
-        {isCreating ? '创建中...' : isQueueMode ? `创建房间（${fileQueue.length}个文件）` : '创建房间'}
+        {isCreating ? '生成中...' : '生成取件码'}
       </button>
-
-      <div className="info-text">
-        <p>💡 创建房间后，其他用户可以通过房间号加入并接收文件</p>
-        {isQueueMode && <p>📦 房间将依次广播所有文件</p>}
-        <p>⚠️ 作为房主，您需要保持在线直到所有成员接收完成</p>
-      </div>
     </div>
   );
 }

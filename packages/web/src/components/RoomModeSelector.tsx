@@ -6,14 +6,20 @@ import { useAppStore } from '../store';
 import { fileTransferManager } from '@meshkit/core';
 
 export function RoomModeSelector() {
-  const { transferMode, setTransferMode, isTransferring, setCurrentFile } = useAppStore();
+  const { transferMode, setTransferMode, isTransferring, reset, resetRoom } = useAppStore();
 
   const handleModeChange = (mode: 'p2p' | 'room') => {
     if (isTransferring) return; // 传输中不允许切换
 
-    // 切换模式时清空文件选择
+    // 切换模式时清空文件选择和状态
     fileTransferManager.fullReset();
-    setCurrentFile(null);
+
+    // 根据当前模式调用相应的reset
+    if (transferMode === 'room') {
+      resetRoom(); // 从房间模式切换出来，重置房间状态
+    } else {
+      reset(); // 从点对点模式切换出来，重置点对点状态
+    }
 
     setTransferMode(mode);
   };
@@ -35,8 +41,8 @@ export function RoomModeSelector() {
           onClick={() => handleModeChange('room')}
           disabled={isTransferring}
         >
-          <span className="mode-icon">🏠</span>
-          <span className="mode-label">房间模式</span>
+          <span className="mode-icon">🎫</span>
+          <span className="mode-label">取件码模式</span>
         </button>
       </div>
 
@@ -47,7 +53,7 @@ export function RoomModeSelector() {
           </p>
         ) : (
           <p className="description-text">
-            创建房间或加入房间，同时向多人传输文件
+            通过取件码发送或接收文件，支持多人同时接收
           </p>
         )}
       </div>

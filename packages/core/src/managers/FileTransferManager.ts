@@ -748,6 +748,43 @@ export class FileTransferManager {
   }
 
   /**
+   * 发送队列中的单个文件（用于Room模式按需请求）
+   */
+  async sendSingleFileFromQueue(fileIndex: number, targetDeviceId: string): Promise<void> {
+    if (!this.isQueueMode || this.fileQueue.length === 0) {
+      console.error('[FileTransferManager] Not in queue mode or queue is empty');
+      throw new Error('Not in queue mode');
+    }
+
+    // 查找指定索引的文件
+    const queueItem = this.fileQueue.find(item => item.index === fileIndex);
+    if (!queueItem) {
+      console.error('[FileTransferManager] File not found in queue:', fileIndex);
+      throw new Error(`File with index ${fileIndex} not found`);
+    }
+
+    console.log(`[FileTransferManager] Sending single file from queue: ${queueItem.metadata.name} to ${targetDeviceId}`);
+
+    try {
+      // 确保连接存在
+      let conn = p2pManager.getConnection(targetDeviceId, 'outgoing');
+      if (!conn || !conn.open) {
+        console.log('[FileTransferManager] Establishing connection...');
+        conn = p2pManager.connect(targetDeviceId);
+        await new Promise((resolve) => setTimeout(resolve, 1000)); // 等待连接建立
+      }
+
+      // 发送该文件
+      await this.sendQueueFile(targetDeviceId, queueItem);
+
+      console.log(`[FileTransferManager] ✅ Single file sent successfully: ${queueItem.metadata.name}`);
+    } catch (error) {
+      console.error('[FileTransferManager] Failed to send single file:', error);
+      throw error;
+    }
+  }
+
+  /**
    * 验证文件是否可读（读取前1KB测试）
    */
   private async validateFileReadable(file: File): Promise<void> {
@@ -829,7 +866,11 @@ export class FileTransferManager {
   async sendFileToRoom(memberDeviceIds: string[]): Promise<boolean> {
     // 检查是队列模式还是单文件模式
     if (this.isQueueMode && this.fileQueue.length > 0) {
-      // 多文件队列模式
+      // 多文件队列模式：确保 currentFile 被设置
+      if (!this.currentFile && this.fileQueue[0]?.file) {
+        this.currentFile = this.fileQueue[0].file;
+        console.log('[FileTransferManager] Set currentFile from queue:', this.currentFile.name);
+      }
       return this.sendFileQueueToRoom(memberDeviceIds);
     }
 
@@ -1709,6 +1750,7 @@ export class FileTransferManager {
           eventBus.emit('transfer:file-item-completed', {
             fileIndex: currentItem.index,
             file: currentItem.metadata,
+            blob: currentItem.receivedBlob, // 传递接收到的blob
           });
 
           eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
@@ -1961,19 +2003,37 @@ export class FileTransferManager {
 
       console.log(`[FileTransfer] File assembled successfully: ${this.downloadFilename} (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
 
+      // 如果是队列模式，将blob存储到队列项中
+      if (this.isQueueMode && this.currentQueueIndex >= 0) {
+        const currentItem = this.fileQueue[this.currentQueueIndex];
+        if (currentItem) {
+          currentItem.receivedBlob = blob;
+          console.log(`[FileTransfer] Stored blob in queue item ${currentItem.index}`);
+        }
+      }
+
       // 先触发完成事件（设置UI状态）
       this.handleTransferComplete('receive');
 
       // 立即自动触发下载（关键改进！）
-      console.log('[FileTransfer] Auto-triggering download...');
-      setTimeout(() => {
-        this.downloadFile();
+      // 规则：单文件模式自动下载，队列模式（P2P或Room）存IndexedDB由用户选择下载
+      if (!this.isQueueMode) {
+        console.log('[FileTransfer] Auto-triggering download (single file mode)');
+        setTimeout(() => {
+          this.downloadFile();
 
-        // 下载完成后清理内存
+          // 下载完成后清理内存
+          this.receiveChunks.clear();
+          this.receiveBlobParts = [];
+          this.nextBatchIndex = 0;
+        }, 500); // 延迟500ms，确保UI已更新
+      } else {
+        // 队列模式：清理当前文件的接收数据，准备接收下一个文件
+        console.log('[FileTransfer] Queue mode: file saved to IndexedDB, not auto-downloading');
         this.receiveChunks.clear();
         this.receiveBlobParts = [];
         this.nextBatchIndex = 0;
-      }, 500); // 延迟500ms，确保UI已更新
+      }
 
     } catch (error) {
       console.error('[FileTransfer] Failed to assemble file:', error);
@@ -2291,8 +2351,9 @@ export class FileTransferManager {
    * 从队列中移除文件
    */
   removeFileFromQueue(index: number): boolean {
-    if (!this.isQueueMode || this.isTransferring) {
-      console.warn('[FileTransferManager] Cannot remove file: not in queue mode or transfer in progress');
+    // 检查队列是否存在
+    if (this.fileQueue.length === 0) {
+      console.warn('[FileTransferManager] Cannot remove file: queue is empty');
       return false;
     }
 
@@ -2303,6 +2364,8 @@ export class FileTransferManager {
     }
 
     const item = this.fileQueue[fileIndex];
+    // 只检查当前文件的状态，不检查全局传输状态
+    // 这样在房间模式等待阶段也可以删除文件
     if (item.status === 'transferring' || item.status === 'completed') {
       console.warn('[FileTransferManager] Cannot remove file in progress or completed');
       return false;
@@ -2327,6 +2390,39 @@ export class FileTransferManager {
 
     return true;
   }
+
+  /**
+   * 下载队列中指定索引的文件（从receivedBlob）
+   */
+  downloadFileByIndex(index: number): boolean {
+    if (!this.isQueueMode || this.fileQueue.length === 0) {
+      console.error('[FileTransferManager] Not in queue mode or queue is empty');
+      return false;
+    }
+
+    // 查找对应索引的文件
+    const queueItem = this.fileQueue.find(item => item.index === index);
+    if (!queueItem) {
+      console.error('[FileTransferManager] File not found in queue:', index);
+      return false;
+    }
+
+    // 检查是否已接收
+    if (!queueItem.receivedBlob) {
+      console.error('[FileTransferManager] File not yet received:', queueItem.metadata.name);
+      return false;
+    }
+
+    console.log('[FileTransferManager] Downloading file from queue:', queueItem.metadata.name, index);
+
+    // 设置下载参数
+    this.downloadBlob = queueItem.receivedBlob;
+    this.downloadFilename = queueItem.metadata.name;
+
+    // 触发下载
+    return this.downloadFile();
+  }
+
 }
 
 // 导出单例

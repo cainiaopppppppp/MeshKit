@@ -37,6 +37,9 @@ export class RoomManager {
         case 'room-error':
           this.handleRoomError(message.error);
           break;
+        case 'file-request':
+          this.handleFileRequest(message.fileIndex, message.requesterId);
+          break;
       }
     });
   }
@@ -171,6 +174,7 @@ export class RoomManager {
     console.log('[RoomManager] 房间更新:', room);
 
     const isNewRoom = !this.currentRoom;
+
     this.currentRoom = room;
 
     if (isNewRoom) {
@@ -178,15 +182,87 @@ export class RoomManager {
       if (room.hostId === this.myDeviceId) {
         eventBus.emit('room:created', { room });
       } else {
+        // 接收方加入房间：立即建立与房主的P2P连接
+        console.log('[RoomManager] 接收方加入房间，准备建立P2P连接...');
         eventBus.emit('room:joined', { room });
+
+        // 延迟一小段时间确保事件处理完成，然后建立P2P连接
+        setTimeout(() => {
+          this.establishHostConnection(room.hostId);
+        }, 100);
       }
     } else {
       // 房间状态更新
       eventBus.emit('room:updated', { room });
     }
+  }
 
-    // 检查是否有新成员加入
-    // TODO: 比较成员列表，触发member-joined事件
+  /**
+   * 请求房间中的文件（接收方使用）
+   */
+  requestFile(fileIndex: number): void {
+    if (!this.currentRoom) {
+      console.error('[RoomManager] Not in a room');
+      return;
+    }
+
+    if (this.currentRoom.hostId === this.myDeviceId) {
+      console.error('[RoomManager] Host cannot request files from itself');
+      return;
+    }
+
+    console.log('[RoomManager] Requesting file from host:', fileIndex);
+
+    // 向房主发送文件请求
+    signalingClient.send({
+      type: 'file-request',
+      roomId: this.currentRoom.id,
+      fileIndex,
+      requesterId: this.myDeviceId ?? undefined,
+    });
+  }
+
+  /**
+   * 处理文件请求（发送方使用）
+   */
+  private handleFileRequest(fileIndex: number, requesterId: string): void {
+    if (!this.isHost()) {
+      console.warn('[RoomManager] Only host can handle file requests');
+      return;
+    }
+
+    console.log('[RoomManager] Handling file request:', { fileIndex, requesterId });
+
+    // 导入FileTransferManager并发送指定的文件
+    import('./FileTransferManager').then(({ fileTransferManager }) => {
+      fileTransferManager.sendSingleFileFromQueue(fileIndex, requesterId);
+    }).catch(error => {
+      console.error('[RoomManager] Failed to send requested file:', error);
+    });
+  }
+
+  /**
+   * 建立与房主的P2P连接（接收方专用）
+   */
+  private establishHostConnection(hostId: string): void {
+    if (!this.myDeviceId) {
+      console.error('[RoomManager] Cannot establish connection: device not initialized');
+      return;
+    }
+
+    console.log('[RoomManager] 建立与房主的P2P连接:', hostId);
+
+    // 导入p2pManager并建立连接
+    import('./P2PManager').then(({ p2pManager }) => {
+      // 建立用于文件传输的连接
+      p2pManager.connect(hostId, {
+        type: 'room-member',
+        deviceName: this.myDeviceName || 'Unknown'
+      });
+      console.log('[RoomManager] P2P连接请求已发送');
+    }).catch(error => {
+      console.error('[RoomManager] 建立P2P连接失败:', error);
+    });
   }
 
   /**
@@ -196,6 +272,7 @@ export class RoomManager {
     console.error('[RoomManager] 房间错误:', error);
     eventBus.emit('room:error', { error });
   }
+
 
   /**
    * 获取当前房间
@@ -230,6 +307,33 @@ export class RoomManager {
   getMemberDeviceIds(): string[] {
     return this.getOtherMembers().map(m => m.deviceId);
   }
+
+  /**
+   * 更新房间文件列表（发送方添加/删除文件）
+   */
+  updateRoomFiles(fileList: FileMetadata[]): void {
+    if (!this.currentRoom) {
+      throw new Error('未在房间中');
+    }
+
+    if (this.currentRoom.hostId !== this.myDeviceId) {
+      throw new Error('只有主持人可以更新文件列表');
+    }
+
+    console.log('[RoomManager] 更新房间文件列表:', fileList.length, '个文件');
+
+    // 更新本地房间状态
+    this.currentRoom.fileList = fileList;
+    this.currentRoom.isMultiFile = fileList.length > 1;
+
+    // 通知服务器更新房间文件列表
+    signalingClient.send({
+      type: 'update-room-files',
+      roomId: this.currentRoom.id,
+      fileList
+    });
+  }
+
 }
 
 // 导出单例

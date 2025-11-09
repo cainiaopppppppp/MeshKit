@@ -18,6 +18,7 @@ const STORAGE_KEYS = {
   DEVICE_ID: 'meshkit_device_id',
   DEVICE_NAME: 'meshkit_device_name',
   LAST_FILE_ID: 'meshkit_last_file_id',
+  RECEIVED_FILE_IDS: 'meshkit_received_file_ids', // 存储多个文件ID的数组
 };
 
 /**
@@ -86,7 +87,22 @@ async function restoreLastReceivedFile(): Promise<void> {
 async function saveReceivedFile(file: File): Promise<void> {
   try {
     const fileId = await fileStorage.saveFile(file);
+
+    // 保存单个文件ID（向后兼容）
     localStorage.setItem(STORAGE_KEYS.LAST_FILE_ID, fileId);
+
+    // 添加到文件ID数组
+    try {
+      const existingIds = localStorage.getItem(STORAGE_KEYS.RECEIVED_FILE_IDS);
+      const fileIds: string[] = existingIds ? JSON.parse(existingIds) : [];
+      if (!fileIds.includes(fileId)) {
+        fileIds.push(fileId);
+        localStorage.setItem(STORAGE_KEYS.RECEIVED_FILE_IDS, JSON.stringify(fileIds));
+      }
+    } catch (error) {
+      console.warn('[useP2P] Failed to update file IDs array:', error);
+    }
+
     console.log('[useP2P] File saved to IndexedDB:', file.name, fileId);
   } catch (error) {
     console.error('[useP2P] Failed to save file:', error);
@@ -258,12 +274,18 @@ export function useP2P() {
 
     // 传输事件
     const onTransferPreparing = ({ direction }: { direction: 'send' | 'receive' }) => {
+      // 清除之前的下载状态（开始新传输）
+      setDownload(false, '');
+      setStreamingDownload(false, '');
       // 立即显示"准备中"状态（即时反馈）
       setTransferring(true, direction);
       console.log('[useP2P] Transfer preparing:', direction);
     };
 
     const onTransferStarted = ({ direction }: { direction: 'send' | 'receive' }) => {
+      // 清除之前的下载状态（开始新传输）
+      setDownload(false, '');
+      setStreamingDownload(false, '');
       setTransferring(true, direction);
       console.log('[useP2P] Transfer started:', direction);
     };
@@ -353,8 +375,32 @@ export function useP2P() {
       console.log('[useP2P] File item started:', fileIndex, file.name);
     };
 
-    const onFileItemCompleted = ({ fileIndex, file }: any) => {
+    const onFileItemCompleted = async ({ fileIndex, file, blob }: any) => {
       console.log('[useP2P] File item completed:', fileIndex, file.name);
+
+      // 使用事件传递的blob（而不是getDownloadInfo，避免被覆盖）
+      if (blob) {
+        console.log('[useP2P] Saving queue file to IndexedDB:', file.name);
+
+        try {
+          const sizeMB = blob.size / 1024 / 1024;
+          const MAX_STORAGE_SIZE_MB = 500;
+
+          if (sizeMB <= MAX_STORAGE_SIZE_MB) {
+            const fileBlob = new File([blob], file.name, {
+              type: blob.type || 'application/octet-stream',
+            });
+            await saveReceivedFile(fileBlob);
+            console.log('[useP2P] Queue file saved to IndexedDB:', file.name);
+          } else {
+            console.log(`[useP2P] File too large (${sizeMB.toFixed(2)} MB), skipping IndexedDB storage`);
+          }
+        } catch (error) {
+          console.error('[useP2P] Failed to save queue file:', error);
+        }
+      } else {
+        console.warn('[useP2P] No blob in file-item-completed event');
+      }
     };
 
     const onFileItemFailed = ({ fileIndex, file, error }: any) => {
@@ -375,6 +421,12 @@ export function useP2P() {
           icon: '/favicon.ico',
           tag: 'queue-complete',
         });
+      }
+
+      // 设置下载状态，显示下载完成界面
+      if (successCount > 0) {
+        setDownload(true, `${successCount} 个文件`);
+        console.log('[useP2P] Queue download complete, UI should show download section');
       }
 
       setTransferring(false);
