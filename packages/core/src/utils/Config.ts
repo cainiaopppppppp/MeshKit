@@ -19,6 +19,15 @@ class Config {
           rtcpMuxPolicy: 'require',
         },
       },
+      peerjs: {
+        // PeerJS服务器运行在独立的8000端口
+        // WebSocket信令服务器运行在7000端口
+        // host会自动使用当前访问的hostname，支持IP变动
+        port: 8000,
+        path: '/peerjs',  // 自定义路径
+        debug: 2, // 调试级别
+        // 如果想用公共服务器，注释掉port和path即可
+      },
       transfer: {
         chunkSize: 1024 * 1024, // 1MB (优化大文件传输)
         sendDelay: 0,

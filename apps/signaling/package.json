@@ -9,6 +9,8 @@
     "start": "node src/server.js"
   },
   "dependencies": {
+    "express": "^5.1.0",
+    "peer": "^1.0.2",
     "ws": "^8.14.0"
   }
 }

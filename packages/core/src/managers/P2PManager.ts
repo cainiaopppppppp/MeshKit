@@ -37,9 +37,35 @@ export class P2PManager {
 
       // 创建Peer实例
       const webrtcConfig = config.get('webrtc');
-      this.peer = new PeerJS(deviceId, {
+      const peerjsConfig = config.get('peerjs');
+
+      // 根据配置选择PeerJS服务器
+      const peerOptions: any = {
         config: webrtcConfig.config as RTCConfiguration,
-      });
+        debug: peerjsConfig?.debug ?? 2,
+      };
+
+      // 动态获取当前访问的hostname（支持IP变动）
+      if (peerjsConfig?.port && typeof window !== 'undefined') {
+        // 使用当前访问的hostname（就像WebSocket那样）
+        const hostname = window.location.hostname;
+        console.log('[P2PManager] Using local PeerJS server:', `${hostname}:${peerjsConfig.port}`);
+        peerOptions.host = hostname;
+        peerOptions.port = peerjsConfig.port;
+        peerOptions.path = peerjsConfig.path || '/';
+      } else if (peerjsConfig?.host) {
+        // 降级：使用配置文件中的固定host
+        console.log('[P2PManager] Using configured PeerJS server:', `${peerjsConfig.host}:${peerjsConfig.port}`);
+        peerOptions.host = peerjsConfig.host;
+        peerOptions.port = peerjsConfig.port;
+        peerOptions.path = peerjsConfig.path;
+      } else {
+        // 使用默认公共服务器
+        console.log('[P2PManager] Creating Peer with default PeerJS server...');
+        console.log('[P2PManager] ⚠️  Note: Using public PeerJS server (may be slow in China)');
+      }
+
+      this.peer = new PeerJS(deviceId, peerOptions);
 
       // 设置事件监听
       this.setupPeerEvents();
@@ -170,8 +196,25 @@ export class P2PManager {
     const connectionId = `${direction}-${conn.peer}`;
     this.connections.set(connectionId, conn);
 
+    console.log(`[P2PManager] Setting up connection: ${connectionId}`);
+
+    // 添加连接超时检测（30秒）
+    let isOpened = false;
+    const timeout = setTimeout(() => {
+      if (!isOpened) {
+        console.error(`[P2PManager] ⚠️  Connection timeout: ${connectionId} (30s)`);
+        console.error('[P2PManager] Possible causes:');
+        console.error('  1. PeerJS public server is slow or unavailable');
+        console.error('  2. Network/Firewall blocking WebRTC');
+        console.error('  3. NAT traversal failed');
+        console.error('Suggestion: Consider using a local PeerJS server');
+      }
+    }, 30000);
+
     conn.on('open', () => {
-      console.log(`[P2PManager] Connection opened: ${connectionId}`);
+      isOpened = true;
+      clearTimeout(timeout);
+      console.log(`[P2PManager] ✅ Connection opened: ${connectionId}`);
       eventBus.emit('p2p:connection:open', {
         peer: conn.peer,
         direction,

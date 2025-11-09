@@ -26,9 +26,9 @@ export function CreateRoom() {
       // 单文件模式
       setSelectedFile(files[0]);
     } else {
-      // 多文件模式
+      // 多文件模式 - Room模式跳过验证，避免大文件阻塞
       const filesArray = Array.from(files);
-      await fileTransferManager.selectFiles(filesArray);
+      await fileTransferManager.selectFiles(filesArray, true); // skipValidation=true
     }
   };
 
@@ -42,15 +42,16 @@ export function CreateRoom() {
       // 已有队列，继续添加
       await fileTransferManager.appendFiles(filesArray);
     } else if (selectedFile) {
-      // 已有单文件，转换为队列模式
-      await fileTransferManager.selectFiles([selectedFile, ...filesArray]);
+      // 已有单文件，转换为队列模式 - Room模式跳过验证
+      await fileTransferManager.selectFiles([selectedFile, ...filesArray], true);
       setSelectedFile(null);
     } else {
       // 没有文件，新建队列
       if (filesArray.length === 1) {
         setSelectedFile(filesArray[0]);
       } else {
-        await fileTransferManager.selectFiles(filesArray);
+        // Room模式跳过验证
+        await fileTransferManager.selectFiles(filesArray, true);
       }
     }
 
@@ -81,7 +82,8 @@ export function CreateRoom() {
     if (filesArray.length === 1) {
       setSelectedFile(filesArray[0]);
     } else {
-      await fileTransferManager.selectFiles(filesArray);
+      // Room模式跳过验证，避免大文件阻塞
+      await fileTransferManager.selectFiles(filesArray, true);
     }
   };
 

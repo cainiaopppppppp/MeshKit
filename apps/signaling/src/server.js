@@ -1,18 +1,54 @@
 // Signaling Server - P2P局域网文件传输
 const WebSocket = require('ws');
+const express = require('express');
 const http = require('http');
 const path = require('path');
+const { ExpressPeerServer } = require('peer');
 
-const PORT = 8000;
+const WS_PORT = 7000;    // WebSocket信令服务器端口
+const PEER_PORT = 8000;  // PeerJS服务器端口
 
-// 创建 HTTP 服务器（仅用于WebSocket）
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('P2P Transfer Signaling Server Running\n');
+// ===== PeerJS 服务器 (端口 8000) =====
+const peerApp = express();
+const peerHttpServer = http.createServer(peerApp);
+
+// 创建 PeerJS 服务器
+const peerServer = ExpressPeerServer(peerHttpServer, {
+  debug: true,
+  path: '/',  // PeerJS子路径，与客户端期望的路径匹配
+  allow_discovery: true,
+});
+
+// 挂载 PeerJS 服务器到 /mypeerjs 路径
+peerApp.use('/peerjs', peerServer);
+
+// PeerJS根路径响应
+peerApp.get('/', (req, res) => {
+  res.send('PeerJS Server Running\n');
+});
+
+peerServer.on('connection', (client) => {
+  console.log(`🔗 PeerJS客户端连接: ${client.getId()}`);
+});
+
+peerServer.on('disconnect', (client) => {
+  console.log(`🔌 PeerJS客户端断开: ${client.getId()}`);
+});
+
+// ===== WebSocket 信令服务器 (端口 7000) =====
+const wsApp = express();
+const wsHttpServer = http.createServer(wsApp);
+
+// WebSocket根路径响应
+wsApp.get('/', (req, res) => {
+  res.send('WebSocket Signaling Server Running\n');
 });
 
 // 创建 WebSocket 服务器
-const wss = new WebSocket.Server({ server });
+const wss = new WebSocket.Server({
+  server: wsHttpServer,
+  path: '/ws'
+});
 
 // 存储所有连接的设备
 const devices = new Map();
@@ -380,28 +416,37 @@ function getLocalIP() {
   return '127.0.0.1';
 }
 
-server.listen(PORT, '0.0.0.0', () => {
+// 启动 WebSocket 服务器 (端口 7000)
+wsHttpServer.listen(WS_PORT, '0.0.0.0', () => {
   const localIP = getLocalIP();
 
   console.log('');
   console.log('=================================');
-  console.log('🚀 信令服务器已启动！');
+  console.log('📱 WebSocket信令服务器已启动！');
   console.log('=================================');
   console.log('');
-  console.log('📱 WebSocket地址：');
+  console.log(`   ws://${localIP}:${WS_PORT}/ws`);
+  console.log(`   ws://localhost:${WS_PORT}/ws`);
   console.log('');
-  console.log(`   ws://${localIP}:${PORT}`);
-  console.log('');
-  console.log('   或者');
-  console.log('');
-  console.log(`   ws://localhost:${PORT}`);
-  console.log('');
+  console.log('💡 用于房间管理和信令交换');
   console.log('=================================');
   console.log('');
-  console.log('💡 提示：');
-  console.log('  - 用于设备发现和信令交换');
-  console.log('  - 实际文件传输通过P2P直连');
-  console.log('  - 按 Ctrl+C 停止服务器');
+});
+
+// 启动 PeerJS 服务器 (端口 8000)
+peerHttpServer.listen(PEER_PORT, '0.0.0.0', () => {
+  const localIP = getLocalIP();
+
+  console.log('');
+  console.log('=================================');
+  console.log('🔗 PeerJS服务器已启动！');
+  console.log('=================================');
+  console.log('');
+  console.log(`   http://${localIP}:${PEER_PORT}/mypeerjs`);
+  console.log(`   http://localhost:${PEER_PORT}/mypeerjs`);
+  console.log('');
+  console.log('💡 用于WebRTC P2P连接建立');
+  console.log('=================================');
   console.log('');
   console.log('📊 服务器日志：');
   console.log('');

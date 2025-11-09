@@ -194,25 +194,30 @@ export class FileTransferManager {
 
   /**
    * 选择文件（单文件模式）
+   * @param skipValidation 跳过文件验证（Room模式使用）
    */
-  async selectFile(file: File): Promise<boolean> {
+  async selectFile(file: File, skipValidation: boolean = false): Promise<boolean> {
     if (this.isTransferring) {
       console.warn('[FileTransferManager] Transfer in progress');
       return false;
     }
 
-    // 验证文件可读性
-    try {
-      console.log(`[FileTransferManager] Validating file: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
-      await this.validateFileReadable(file);
-      console.log('[FileTransferManager] File validation passed');
-    } catch (error) {
-      console.error('[FileTransferManager] File validation failed:', error);
-      eventBus.emit('transfer:error', {
-        error: new Error(`文件无法读取: ${(error as Error).message}`),
-        direction: 'send',
-      });
-      return false;
+    // 验证文件可读性（Room模式可跳过）
+    if (!skipValidation) {
+      try {
+        console.log(`[FileTransferManager] Validating file: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+        await this.validateFileReadable(file);
+        console.log('[FileTransferManager] File validation passed');
+      } catch (error) {
+        console.error('[FileTransferManager] File validation failed:', error);
+        eventBus.emit('transfer:error', {
+          error: new Error(`文件无法读取: ${(error as Error).message}`),
+          direction: 'send',
+        });
+        return false;
+      }
+    } else {
+      console.log(`[FileTransferManager] ⚡ Skipped validation for: ${file.name} (Room mode)`);
     }
 
     this.currentFile = file;
@@ -228,8 +233,9 @@ export class FileTransferManager {
 
   /**
    * 选择多个文件（多文件模式）
+   * @param skipValidation 跳过文件验证（Room模式按需传输时使用，避免大文件阻塞主线程）
    */
-  async selectFiles(files: File[]): Promise<boolean> {
+  async selectFiles(files: File[], skipValidation: boolean = false): Promise<boolean> {
     if (this.isTransferring) {
       console.warn('[FileTransferManager] Transfer in progress');
       return false;
@@ -240,18 +246,26 @@ export class FileTransferManager {
       return false;
     }
 
-    console.log(`[FileTransferManager] Selecting ${files.length} files for transfer`);
+    console.log(`[FileTransferManager] Selecting ${files.length} files for transfer${skipValidation ? ' (skip validation for Room mode)' : ''}`);
 
-    // 验证所有文件可读性
+    // 验证所有文件可读性（Room模式可跳过，延迟到传输时验证）
     const validatedFiles: File[] = [];
-    for (const file of files) {
-      try {
-        console.log(`[FileTransferManager] Validating: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
-        await this.validateFileReadable(file);
-        validatedFiles.push(file);
-      } catch (error) {
-        console.error(`[FileTransferManager] File validation failed for ${file.name}:`, error);
-        // 跳过无效文件，继续处理其他文件
+
+    if (skipValidation) {
+      // Room模式：跳过验证，避免大文件阻塞，直接使用所有文件
+      validatedFiles.push(...files);
+      console.log(`[FileTransferManager] ⚡ Skipped validation for ${files.length} files (Room mode - will validate on demand)`);
+    } else {
+      // P2P模式：立即验证所有文件
+      for (const file of files) {
+        try {
+          console.log(`[FileTransferManager] Validating: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+          await this.validateFileReadable(file);
+          validatedFiles.push(file);
+        } catch (error) {
+          console.error(`[FileTransferManager] File validation failed for ${file.name}:`, error);
+          // 跳过无效文件，继续处理其他文件
+        }
       }
     }
 
