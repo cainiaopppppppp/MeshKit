@@ -149,8 +149,8 @@ export function RoomView() {
           // 清空队列
           fileTransferManager.clearFileQueue();
 
-          // 重新选择文件（这会重新索引为0, 1, 2...）
-          await fileTransferManager.selectFiles(remainingFiles);
+          // 重新选择文件（Room模式跳过验证）
+          await fileTransferManager.selectFiles(remainingFiles, true);
           console.log('[RoomView] 文件队列已重建，共', remainingFiles.length, '个文件');
         } else {
           // 如果没有剩余文件，清空队列
@@ -205,12 +205,12 @@ export function RoomView() {
           // 清空队列
           fileTransferManager.clearFileQueue();
 
-          // 重新选择所有文件（这会重新索引为0, 1, 2...）
-          await fileTransferManager.selectFiles(allFiles);
+          // 重新选择所有文件（Room模式跳过验证）
+          await fileTransferManager.selectFiles(allFiles, true);
           console.log('[RoomView] 文件队列已重建，共', allFiles.length, '个文件');
         } else {
-          // 首次添加文件，初始化队列
-          await fileTransferManager.selectFiles(filesArray);
+          // 首次添加文件，初始化队列（Room模式跳过验证）
+          await fileTransferManager.selectFiles(filesArray, true);
           console.log('[RoomView] 初始化文件队列，共', filesArray.length, '个文件');
         }
 

@@ -41,8 +41,8 @@ export function useRoom() {
         fileList = fileQueue.map(item => item.metadata);
         console.log('[useRoom] Creating room in queue mode:', fileQueue.length, 'files');
       } else {
-        // 单文件模式：选择文件
-        const success = await fileTransferManager.selectFile(file);
+        // 单文件模式：选择文件（Room模式跳过验证，避免大文件阻塞）
+        const success = await fileTransferManager.selectFile(file, true); // skipValidation=true
         if (!success) {
           throw new Error('文件选择失败');
         }

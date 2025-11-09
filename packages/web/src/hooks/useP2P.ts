@@ -11,7 +11,7 @@ import {
 import { useAppStore } from '../store';
 import { fileStorage } from '../utils/FileStorage';
 
-const SIGNALING_URL = `ws://${window.location.hostname}:8000`;
+const SIGNALING_URL = `ws://${window.location.hostname}:7000/ws`;
 
 // localStorage keys
 const STORAGE_KEYS = {

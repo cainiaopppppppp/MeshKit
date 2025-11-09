@@ -78,6 +78,12 @@ export interface P2PConfig {
     iceServers: RTCIceServer[];
     config?: RTCConfiguration;
   };
+  peerjs?: {
+    host?: string;
+    port?: number;
+    path?: string;
+    debug?: number;
+  };
   transfer: {
     chunkSize: number;
     sendDelay: number;
