@@ -117,13 +117,29 @@ export class P2PManager {
 
   /**
    * 连接到远程设备
+   * 如果连接已存在且处于open状态，则复用该连接
    */
   connect(targetDeviceId: string, metadata?: any): DataConnection {
     if (!this.isInitialized || !this.peer) {
       throw new Error('P2PManager not initialized');
     }
 
-    console.log(`[P2PManager] Connecting to ${targetDeviceId}...`);
+    // 检查是否已有outgoing连接
+    const connectionId = `outgoing-${targetDeviceId}`;
+    const existingConn = this.connections.get(connectionId);
+
+    if (existingConn && existingConn.open) {
+      console.log(`[P2PManager] Reusing existing connection to ${targetDeviceId}`);
+      return existingConn;
+    }
+
+    // 如果连接存在但已关闭，清理它
+    if (existingConn) {
+      console.log(`[P2PManager] Cleaning up closed connection to ${targetDeviceId}`);
+      this.connections.delete(connectionId);
+    }
+
+    console.log(`[P2PManager] Creating new connection to ${targetDeviceId}...`);
 
     // 配置数据连接选项
     const conn = this.peer.connect(targetDeviceId, {

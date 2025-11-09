@@ -6,8 +6,12 @@ import type { Device, FileMetadata, TransferProgress, Room, RoomMember, FileQueu
 
 interface AppState {
   // 连接状态
-  isConnected: boolean;
+  isConnected: boolean; // 信令服务器连接状态
   setConnected: (connected: boolean) => void;
+
+  // P2P/RTC连接状态（用于Room模式）
+  p2pConnected: boolean;
+  setP2pConnected: (connected: boolean) => void;
 
   // 设备信息
   myDeviceId: string | null;
@@ -74,6 +78,7 @@ interface AppState {
 export const useAppStore = create<AppState>((set) => ({
   // 初始状态
   isConnected: false,
+  p2pConnected: false,
   myDeviceId: null,
   myDeviceName: null,
   devices: [],
@@ -95,6 +100,7 @@ export const useAppStore = create<AppState>((set) => ({
 
   // Actions
   setConnected: (connected) => set({ isConnected: connected }),
+  setP2pConnected: (connected) => set({ p2pConnected: connected }),
 
   setMyDevice: (id, name) =>
     set({ myDeviceId: id, myDeviceName: name }),
@@ -174,12 +180,23 @@ export const useAppStore = create<AppState>((set) => ({
       downloadFilename: '',
       isStreamingDownload: false,
       selectedDeviceId: null,
+      p2pConnected: false,
     }),
 
   resetRoom: () =>
     set({
       currentRoom: null,
       broadcastProgress: {},
-      transferMode: 'p2p',
+      currentFile: null,
+      fileQueue: [],
+      isQueueMode: false,
+      queueDirection: null,
+      isTransferring: false,
+      transferDirection: null,
+      transferProgress: null,
+      hasDownload: false,
+      downloadFilename: '',
+      isStreamingDownload: false,
+      p2pConnected: false,
     }),
 }));

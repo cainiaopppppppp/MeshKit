@@ -30,7 +30,7 @@ function generateRoomId() {
 /**
  * 创建房间
  */
-function createRoom(hostId, hostName, fileInfo) {
+function createRoom(hostId, hostName, roomData) {
   const roomId = generateRoomId();
 
   const room = {
@@ -45,12 +45,14 @@ function createRoom(hostId, hostName, fileInfo) {
       joinedAt: Date.now(),
     }],
     createdAt: Date.now(),
-    fileInfo: fileInfo,
+    fileInfo: roomData.fileInfo,
+    fileList: roomData.fileList,
+    isMultiFile: roomData.isMultiFile,
     status: 'waiting'
   };
 
   rooms.set(roomId, room);
-  console.log(`🏠 房间创建: ${roomId} by ${hostName}`);
+  console.log(`🏠 房间创建: ${roomId} by ${hostName}`, roomData.isMultiFile ? `(多文件模式, ${roomData.fileList?.length || 0} 个文件)` : '(单文件模式)');
 
   return room;
 }
@@ -180,7 +182,7 @@ wss.on('connection', (ws, req) => {
         case 'create-room':
           // 创建房间
           try {
-            const room = createRoom(deviceId, data.deviceName, data.data.fileInfo);
+            const room = createRoom(deviceId, data.deviceName, data.data);
             ws.send(JSON.stringify({
               type: 'room-update',
               room: room
@@ -247,6 +249,35 @@ wss.on('connection', (ws, req) => {
 
             // 广播开始传输
             broadcastRoomUpdate(room);
+          } catch (error) {
+            ws.send(JSON.stringify({
+              type: 'room-error',
+              error: error.message
+            }));
+          }
+          break;
+
+        case 'file-request':
+          // 接收方请求文件
+          try {
+            const room = rooms.get(data.roomId);
+            if (!room) {
+              throw new Error('房间不存在');
+            }
+
+            // 转发文件请求给房主
+            const hostDevice = devices.get(room.hostId);
+            if (hostDevice && hostDevice.ws.readyState === WebSocket.OPEN) {
+              hostDevice.ws.send(JSON.stringify({
+                type: 'file-request',
+                fileIndex: data.fileIndex,
+                requesterId: data.requesterId || deviceId,
+                roomId: data.roomId
+              }));
+              console.log(`📥 文件请求: 房间 ${data.roomId}, 文件索引 ${data.fileIndex}, 请求者 ${deviceId}`);
+            } else {
+              throw new Error('房主不在线');
+            }
           } catch (error) {
             ws.send(JSON.stringify({
               type: 'room-error',

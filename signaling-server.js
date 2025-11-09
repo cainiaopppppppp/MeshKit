@@ -61,6 +61,9 @@ const wss = new WebSocket.Server({ server });
 // 存储所有连接的设备
 const devices = new Map();
 
+// 存储所有房间
+const rooms = new Map();
+
 wss.on('connection', (ws, req) => {
   const clientIp = req.socket.remoteAddress;
   console.log('✅ 新设备连接:', clientIp);
@@ -106,6 +109,30 @@ wss.on('connection', (ws, req) => {
             devices.get(deviceId).timestamp = Date.now();
           }
           break;
+
+        case 'create-room':
+          handleCreateRoom(data, ws);
+          break;
+
+        case 'join-room':
+          handleJoinRoom(data, ws);
+          break;
+
+        case 'leave-room':
+          handleLeaveRoom(data);
+          break;
+
+        case 'start-broadcast':
+          handleStartBroadcast(data);
+          break;
+
+        case 'update-room-files':
+          handleUpdateRoomFiles(data);
+          break;
+
+        case 'request-file':
+          handleRequestFile(data);
+          break;
       }
     } catch (error) {
       console.error('❌ 消息处理错误:', error);
@@ -145,6 +172,197 @@ function broadcastDeviceList() {
       device.ws.send(message);
     }
   });
+}
+
+// 生成6位房间号
+function generateRoomId() {
+  let roomId;
+  do {
+    roomId = Math.floor(100000 + Math.random() * 900000).toString();
+  } while (rooms.has(roomId));
+  return roomId;
+}
+
+// 向房间内所有成员广播消息
+function broadcastToRoom(room, message, excludeDeviceId = null) {
+  room.members.forEach(member => {
+    if (member.deviceId !== excludeDeviceId) {
+      const device = devices.get(member.deviceId);
+      if (device && device.ws.readyState === WebSocket.OPEN) {
+        device.ws.send(JSON.stringify(message));
+      }
+    }
+  });
+}
+
+// 处理创建房间
+function handleCreateRoom(data, ws) {
+  const { deviceId, deviceName, data: roomData } = data;
+  const { fileInfo, fileList, isMultiFile } = roomData;
+
+  const roomId = generateRoomId();
+  const room = {
+    id: roomId,
+    name: `Room ${roomId}`,
+    hostId: deviceId,
+    members: [{
+      deviceId,
+      deviceName,
+      role: 'host',
+      status: 'waiting',
+      joinedAt: Date.now()
+    }],
+    createdAt: Date.now(),
+    fileInfo,
+    fileList: isMultiFile ? fileList : undefined,
+    isMultiFile: isMultiFile || false,
+    status: 'waiting'
+  };
+
+  rooms.set(roomId, room);
+  console.log(`🏠 房间创建成功: ${roomId} by ${deviceName}`);
+
+  // 发送房间创建成功消息
+  ws.send(JSON.stringify({
+    type: 'room-update',
+    room
+  }));
+}
+
+// 处理加入房间
+function handleJoinRoom(data, ws) {
+  const { deviceId, deviceName, roomId } = data;
+
+  const room = rooms.get(roomId);
+  if (!room) {
+    ws.send(JSON.stringify({
+      type: 'room-error',
+      error: '房间不存在'
+    }));
+    return;
+  }
+
+  // 检查是否已经在房间中
+  const existingMember = room.members.find(m => m.deviceId === deviceId);
+  if (existingMember) {
+    // 已在房间中，直接返回房间信息
+    ws.send(JSON.stringify({
+      type: 'room-update',
+      room
+    }));
+    return;
+  }
+
+  // 添加新成员
+  room.members.push({
+    deviceId,
+    deviceName,
+    role: 'member',
+    status: 'waiting',
+    joinedAt: Date.now()
+  });
+
+  console.log(`👤 ${deviceName} 加入房间: ${roomId}`);
+
+  // 向所有成员广播房间更新（包括新加入的成员）
+  broadcastToRoom(room, {
+    type: 'room-update',
+    room
+  });
+
+  // 向新成员发送房间信息
+  ws.send(JSON.stringify({
+    type: 'room-update',
+    room
+  }));
+}
+
+// 处理离开房间
+function handleLeaveRoom(data) {
+  const { deviceId, roomId } = data;
+
+  const room = rooms.get(roomId);
+  if (!room) return;
+
+  // 移除成员
+  room.members = room.members.filter(m => m.deviceId !== deviceId);
+
+  console.log(`👋 设备离开房间: ${deviceId} from ${roomId}`);
+
+  // 如果房主离开或房间为空，删除房间
+  if (deviceId === room.hostId || room.members.length === 0) {
+    console.log(`🗑️  删除房间: ${roomId}`);
+    rooms.delete(roomId);
+
+    // 通知所有成员房间已关闭
+    broadcastToRoom(room, {
+      type: 'room-error',
+      error: '房间已关闭'
+    });
+  } else {
+    // 通知其他成员
+    broadcastToRoom(room, {
+      type: 'room-update',
+      room
+    });
+  }
+}
+
+// 处理开始广播
+function handleStartBroadcast(data) {
+  const { roomId } = data;
+
+  const room = rooms.get(roomId);
+  if (!room) return;
+
+  room.status = 'transferring';
+
+  console.log(`📡 开始广播: ${roomId}`);
+
+  // 通知所有成员开始传输
+  broadcastToRoom(room, {
+    type: 'room-update',
+    room
+  });
+}
+
+// 处理更新房间文件列表（添加/删除文件）
+function handleUpdateRoomFiles(data) {
+  const { roomId, fileList } = data;
+
+  const room = rooms.get(roomId);
+  if (!room) return;
+
+  room.fileList = fileList;
+  room.isMultiFile = fileList && fileList.length > 1;
+
+  console.log(`📝 更新房间文件列表: ${roomId}, ${fileList.length} 个文件`);
+
+  // 通知所有成员文件列表已更新
+  broadcastToRoom(room, {
+    type: 'room-update',
+    room
+  });
+}
+
+// 处理文件下载请求（接收方请求特定文件）
+function handleRequestFile(data) {
+  const { roomId, deviceId, fileIndex } = data;
+
+  const room = rooms.get(roomId);
+  if (!room) return;
+
+  console.log(`📥 文件下载请求: Room ${roomId}, File ${fileIndex} by ${deviceId}`);
+
+  // 转发请求给房主
+  const host = devices.get(room.hostId);
+  if (host && host.ws.readyState === WebSocket.OPEN) {
+    host.ws.send(JSON.stringify({
+      type: 'file-request',
+      from: deviceId,
+      fileIndex
+    }));
+  }
 }
 
 // 定期清理离线设备

@@ -32,6 +32,7 @@ export interface FileQueueItem {
   progress: number;
   selected: boolean; // 是否被接收方选中
   error?: string;
+  receivedBlob?: Blob; // 接收方：接收到的文件blob
 }
 
 /**
@@ -100,7 +101,8 @@ export interface P2PConfig {
 
 export interface SignalingMessage {
   type: 'register' | 'device-list' | 'offer' | 'answer' | 'ice-candidate' | 'heartbeat'
-      | 'create-room' | 'join-room' | 'leave-room' | 'room-update' | 'start-broadcast' | 'room-error';
+      | 'create-room' | 'join-room' | 'leave-room' | 'room-update' | 'start-broadcast' | 'room-error'
+      | 'update-room-files' | 'request-file' | 'file-request';
   deviceId?: string;
   deviceName?: string;
   devices?: Device[];
@@ -111,6 +113,10 @@ export interface SignalingMessage {
   roomId?: string;
   room?: Room;
   error?: string;
+  // 文件相关字段
+  fileList?: FileMetadata[];
+  fileIndex?: number;
+  requesterId?: string; // 文件请求者的设备ID
 }
 
 export interface ChunkData {
@@ -173,7 +179,7 @@ export interface EventMap {
   'transfer:queue-updated': { queue: FileQueueItem[]; direction: 'send' | 'receive' | null };
   'transfer:file-list-received': { files: FileMetadata[]; totalSize: number };
   'transfer:file-item-started': { fileIndex: number; file: FileMetadata };
-  'transfer:file-item-completed': { fileIndex: number; file: FileMetadata };
+  'transfer:file-item-completed': { fileIndex: number; file: FileMetadata; blob?: Blob };
   'transfer:file-item-failed': { fileIndex: number; file: FileMetadata; error: Error };
   'transfer:queue-completed': { totalFiles: number; successCount: number; failedCount: number };
 
@@ -187,4 +193,5 @@ export interface EventMap {
   'room:broadcast-started': { fileInfo: FileMetadata };
   'room:member-progress': { deviceId: string; progress: number };
   'room:error': { error: string };
+  'room:file-request': { deviceId: string; fileIndex: number };
 }

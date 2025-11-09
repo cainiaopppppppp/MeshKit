@@ -2,63 +2,21 @@
  * RoomView - 房间内部界面
  * 显示房间信息、成员列表和传输进度（支持多文件队列）
  */
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useRoom } from '../hooks/useRoom';
 import { useAppStore } from '../store';
-import { FileQueue } from './FileQueue';
-import { FileSelector } from './FileSelector';
-import { fileStorage } from '../utils/FileStorage';
-import { fileTransferManager } from '@meshkit/core';
-import type { RoomMember, FileMetadata } from '@meshkit/core';
 
 export function RoomView() {
-  const { currentRoom, leaveRoom, startBroadcast, isHost, getOtherMembers } = useRoom();
-  const { isTransferring, transferProgress, isQueueMode, fileQueue, hasDownload, queueDirection } = useAppStore();
+  const { currentRoom, leaveRoom, isHost, updateRoomFiles, requestFile } = useRoom();
+  const { isTransferring, transferProgress, isConnected, fileQueue, p2pConnected } = useAppStore();
 
-  // 成员选择文件的状态
-  const [showFileSelector, setShowFileSelector] = useState(false);
-  const [hasSelectedFiles, setHasSelectedFiles] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
 
   const host = isHost();
-
-  // 当成员加入房间后，如果有文件列表，显示文件选择器
-  useEffect(() => {
-    if (!host && currentRoom?.isMultiFile && currentRoom.fileList && !hasSelectedFiles) {
-      setShowFileSelector(true);
-    }
-  }, [host, currentRoom?.isMultiFile, currentRoom?.fileList, hasSelectedFiles]);
-
-  // 确认选择的文件
-  const handleConfirmSelection = (selectedIndexes: number[]) => {
-    if (selectedIndexes.length === 0) {
-      alert('请至少选择一个文件');
-      return;
-    }
-
-    const fileList = currentRoom?.fileList || [];
-    const selectedMetadata: FileMetadata[] = selectedIndexes.map(index => fileList[index]);
-
-    // 创建文件队列
-    fileTransferManager.createReceiveQueue(selectedMetadata);
-    setShowFileSelector(false);
-    setHasSelectedFiles(true);
-  };
-
-  const handleCancelSelection = () => {
-    setShowFileSelector(false);
-  };
-
-  // 计算文件列表总大小
-  const getTotalSize = (fileList: FileMetadata[]): number => {
-    return fileList.reduce((sum, file) => sum + file.size, 0);
-  };
 
   if (!currentRoom) {
     return null;
   }
-
-  const otherMembers = getOtherMembers();
-  const fileInfo = currentRoom.fileInfo;
 
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return bytes + ' B';
@@ -67,40 +25,11 @@ export function RoomView() {
     return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
   };
 
-  const getMemberStatusIcon = (member: RoomMember): string => {
-    if (member.status === 'completed') return '✅';
-    if (member.status === 'receiving') return '📥';
-    if (member.status === 'failed') return '❌';
-    return '⏳';
-  };
-
-  const getMemberStatusText = (member: RoomMember): string => {
-    if (member.status === 'completed') return '已完成';
-    if (member.status === 'receiving') return '接收中';
-    if (member.status === 'failed') return '失败';
-    return '等待中';
-  };
-
-  const handleStartBroadcast = async () => {
-    if (otherMembers.length === 0) {
-      alert('房间内没有其他成员，无法开始传输');
-      return;
-    }
-
-    const confirm = window.confirm(
-      `确定要开始向 ${otherMembers.length} 个成员广播文件吗？`
-    );
-
-    if (confirm) {
-      await startBroadcast();
-    }
-  };
-
   const handleLeaveRoom = () => {
     const confirmLeave = window.confirm(
       host
-        ? '您是房主，离开后房间将关闭，确定要离开吗？'
-        : '确定要离开房间吗？'
+        ? '确定要取消发送吗？取件码将失效。'
+        : '确定要取消接收吗？'
     );
 
     if (confirmLeave) {
@@ -108,305 +37,367 @@ export function RoomView() {
     }
   };
 
-  const handleDownloadFile = async (filename: string) => {
-    try {
-      const files = await fileStorage.getAllFiles();
-      const file = files.find(f => f.filename === filename);
+  const handleCopyCode = async () => {
+    if (!currentRoom) return;
 
-      if (!file) {
-        alert(`文件 ${filename} 未找到`);
+    try {
+      await navigator.clipboard.writeText(currentRoom.id);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch (error) {
+      // 降级方案：使用传统方法复制
+      const textArea = document.createElement('textarea');
+      textArea.value = currentRoom.id;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        setCopySuccess(true);
+        setTimeout(() => setCopySuccess(false), 2000);
+      } catch (err) {
+        alert('复制失败，请手动复制取件码');
+      }
+      document.body.removeChild(textArea);
+    }
+  };
+
+  // 接收方请求文件（点击"开始传输"）
+  const handleRequestFile = (fileIndex: number) => {
+    if (!p2pConnected) {
+      alert('请等待P2P连接建立');
+      return;
+    }
+
+    console.log('[RoomView] Requesting file:', fileIndex);
+    requestFile(fileIndex);
+  };
+
+  // 接收方从receivedBlob下载文件到本地（点击"保存文件"）
+  const handleDownloadFile = async (fileIndex: number) => {
+    if (!fileQueue || fileQueue.length === 0) {
+      alert('文件尚未接收，请等待传输完成');
+      return;
+    }
+
+    const queueItem = fileQueue.find(item => item.index === fileIndex);
+    if (!queueItem) {
+      alert('未找到该文件');
+      return;
+    }
+
+    if (!queueItem.receivedBlob) {
+      alert('文件尚未传输，请先点击"开始传输"');
+      return;
+    }
+
+    console.log('[RoomView] Downloading file from receivedBlob:', queueItem.metadata.name, 'index:', fileIndex);
+
+    try {
+      const { fileTransferManager } = await import('@meshkit/core');
+      await fileTransferManager.downloadFileByIndex(fileIndex);
+    } catch (error) {
+      console.error('[RoomView] 下载文件错误:', error);
+      alert('下载文件失败: ' + (error as Error).message);
+    }
+  };
+
+  // 检查文件是否已传输完成（有receivedBlob）
+  const isFileReceived = (fileIndex: number): boolean => {
+    if (!fileQueue || fileQueue.length === 0) return false;
+    const queueItem = fileQueue.find(item => item.index === fileIndex);
+    return !!queueItem?.receivedBlob;
+  };
+
+  // 发送方删除文件
+  const handleRemoveFile = async (fileIndex: number) => {
+    if (!currentRoom?.fileList) return;
+
+    const fileName = currentRoom.fileList[fileIndex]?.name;
+    if (!fileName) {
+      alert('文件不存在');
+      return;
+    }
+
+    const confirmRemove = window.confirm(`确定要删除文件 "${fileName}" 吗？`);
+    if (!confirmRemove) return;
+
+    try {
+      // 检查文件列表长度
+      if (currentRoom.fileList.length <= 1) {
+        alert('至少需要保留一个文件');
         return;
       }
 
-      const url = URL.createObjectURL(file.blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = file.filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      const { fileTransferManager } = await import('@meshkit/core');
+
+      // 从文件列表中过滤掉要删除的文件
+      const updatedFileList = currentRoom.fileList.filter((_, index) => index !== fileIndex);
+
+      // 如果有fileQueue，需要重建队列以保持索引同步
+      if (fileQueue && fileQueue.length > 0) {
+        console.log('[RoomView] 重建文件队列以保持索引同步');
+
+        // 获取所有对应的File对象（除了要删除的）
+        const remainingFiles = fileQueue
+          .filter(item => item.index !== fileIndex)
+          .map(item => item.file)
+          .filter(Boolean); // 移除null值
+
+        if (remainingFiles.length > 0) {
+          // 清空队列
+          fileTransferManager.clearFileQueue();
+
+          // 重新选择文件（这会重新索引为0, 1, 2...）
+          await fileTransferManager.selectFiles(remainingFiles);
+          console.log('[RoomView] 文件队列已重建，共', remainingFiles.length, '个文件');
+        } else {
+          // 如果没有剩余文件，清空队列
+          fileTransferManager.clearFileQueue();
+        }
+      }
+
+      // 更新房间文件列表（会同步到所有成员）
+      updateRoomFiles(updatedFileList);
+
+      console.log('[RoomView] 文件已删除:', fileName);
     } catch (error) {
-      alert('下载失败：' + (error as Error).message);
+      console.error('[RoomView] 删除文件错误:', error);
+      alert('删除文件失败: ' + (error as Error).message);
     }
+  };
+
+  // 发送方添加更多文件
+  const handleAddMoreFiles = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.onchange = async (e) => {
+      const files = (e.target as HTMLInputElement).files;
+      if (!files || files.length === 0) return;
+
+      try {
+        const filesArray = Array.from(files);
+        const { fileTransferManager } = await import('@meshkit/core');
+
+        // 创建新文件的元数据
+        const newFileMetadata = filesArray.map(file => ({
+          name: file.name,
+          size: file.size,
+          type: file.type
+        }));
+
+        // 合并当前文件列表和新文件
+        const currentFileList = currentRoom?.fileList || [];
+        const updatedFileList = [...currentFileList, ...newFileMetadata];
+
+        // 重建整个文件队列以保持索引同步
+        if (fileQueue && fileQueue.length > 0) {
+          console.log('[RoomView] 重建文件队列以添加新文件');
+
+          // 获取现有的所有File对象
+          const existingFiles = fileQueue.map(item => item.file).filter(Boolean);
+
+          // 合并现有文件和新文件
+          const allFiles = [...existingFiles, ...filesArray];
+
+          // 清空队列
+          fileTransferManager.clearFileQueue();
+
+          // 重新选择所有文件（这会重新索引为0, 1, 2...）
+          await fileTransferManager.selectFiles(allFiles);
+          console.log('[RoomView] 文件队列已重建，共', allFiles.length, '个文件');
+        } else {
+          // 首次添加文件，初始化队列
+          await fileTransferManager.selectFiles(filesArray);
+          console.log('[RoomView] 初始化文件队列，共', filesArray.length, '个文件');
+        }
+
+        // 更新房间文件列表（会同步到所有成员）
+        updateRoomFiles(updatedFileList);
+
+        console.log(`[RoomView] 添加了 ${files.length} 个文件`);
+        alert(`成功添加 ${files.length} 个文件`);
+      } catch (error) {
+        console.error('[RoomView] 添加文件错误:', error);
+        alert('添加文件失败: ' + (error as Error).message);
+      }
+    };
+    input.click();
   };
 
   return (
     <div className="room-view">
-      {/* 房间头部 */}
-      <div className="room-header">
-        <div className="room-info">
-          <h2 className="room-title">
-            🏠 {currentRoom.name}
+      {/* 取件码显示 */}
+      <div className="mb-6">
+        <div className="text-center mb-4">
+          <h2 className="text-lg font-medium text-gray-900 mb-3">
+            {host ? '取件码' : '已连接'}
           </h2>
-          <div className="room-id-display">
-            <span className="room-id-label">房间号：</span>
-            <span className="room-id-value">{currentRoom.id}</span>
+
+          {/* 取件码卡片 */}
+          <div className="bg-blue-500 text-white p-5 rounded-lg mb-4">
+            <div className="text-sm mb-2 opacity-90">
+              {host ? '分享取件码' : '取件码'}
+            </div>
+            <div className="text-4xl font-bold tracking-widest mb-3 font-mono">
+              {currentRoom.id}
+            </div>
+
+            {/* 复制按钮 */}
+            <button
+              onClick={handleCopyCode}
+              className="bg-white text-blue-600 px-5 py-2 rounded-lg font-medium hover:bg-gray-100 transition-all"
+            >
+              {copySuccess ? '已复制' : '复制取件码'}
+            </button>
           </div>
-          <div className="room-role">
-            {host ? '👑 房主' : '👤 成员'}
+
+          {/* 连接状态 */}
+          <div className="flex items-center justify-center gap-3 mb-3">
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium ${isConnected ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+              <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+              <span>信令 {isConnected ? '已连接' : '未连接'}</span>
+            </div>
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium ${p2pConnected ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+              <div className={`w-1.5 h-1.5 rounded-full ${p2pConnected ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+              <span>RTC {p2pConnected ? '已连接' : '未连接'}</span>
+            </div>
           </div>
         </div>
 
-        <button className="leave-room-button" onClick={handleLeaveRoom}>
-          离开房间
+        <button
+          className="w-full py-2 px-4 bg-red-500 text-white font-medium rounded-lg hover:bg-red-600 transition-all"
+          onClick={handleLeaveRoom}
+        >
+          {host ? '取消发送' : '取消接收'}
         </button>
       </div>
 
-      {/* 文件选择器 - 成员选择要接收的文件 */}
-      {!host && showFileSelector && currentRoom.fileList && (
-        <div className="file-selector-container" style={{
-          marginBottom: '1.5rem'
-        }}>
-          <FileSelector
-            files={currentRoom.fileList}
-            totalSize={getTotalSize(currentRoom.fileList)}
-            onConfirm={handleConfirmSelection}
-            onCancel={handleCancelSelection}
-          />
-        </div>
-      )}
+      {/* 可用文件列表 */}
+      {currentRoom.fileList && currentRoom.fileList.length > 0 && (
+        <div className="mb-6">
+          <h3 className="font-medium text-gray-900 mb-3">
+            {host ? '可下载文件' : '可下载的文件'} ({currentRoom.fileList.length})
+          </h3>
 
-      {/* 文件信息 - 队列模式 */}
-      {isQueueMode && fileQueue.length > 0 && queueDirection === 'receive' && (
-        <div className="mb-4">
-          <FileQueue queue={fileQueue} isSender={false} />
-        </div>
-      )}
-
-      {/* 文件信息 - 单文件模式 */}
-      {!isQueueMode && fileInfo && (
-        <div className="file-info-card">
-          <div className="file-icon-large">📄</div>
-          <div className="file-details">
-            <div className="file-name-large">{fileInfo.name}</div>
-            <div className="file-size-large">{formatFileSize(fileInfo.size)}</div>
-            <div className="file-type">{fileInfo.type || '未知类型'}</div>
-          </div>
-        </div>
-      )}
-
-      {/* 传输控制（仅房主） */}
-      {host && (fileInfo || (isQueueMode && fileQueue.length > 0)) && (
-        <div className="broadcast-control">
-          {!isTransferring ? (
-            <button
-              className="start-broadcast-button"
-              onClick={handleStartBroadcast}
-              disabled={otherMembers.length === 0}
-            >
-              {otherMembers.length === 0
-                ? '等待成员加入...'
-                : `开始向 ${otherMembers.length} 个成员广播`}
-            </button>
-          ) : (
-            <div className="broadcast-status">
-              <div className="status-icon">📡</div>
-              <div className="status-text">正在广播文件...</div>
-              {transferProgress && (
-                <div className="overall-progress">
-                  <div className="progress-bar">
-                    <div
-                      className="progress-fill"
-                      style={{ width: `${transferProgress.progress}%` }}
-                    />
+          <div className="space-y-2 mb-3">
+            {currentRoom.fileList.map((file, index) => (
+              <div
+                key={index}
+                className="bg-gray-50 border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-all"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-gray-900 truncate">{file.name}</div>
+                    <div className="text-sm text-gray-600">{formatFileSize(file.size)}</div>
                   </div>
-                  <div className="progress-text">
-                    {transferProgress.progress.toFixed(1)}% - {transferProgress.speedMB} MB/s
-                  </div>
+
+                  {!host && (
+                    <>
+                      {!isFileReceived(index) ? (
+                        <button
+                          onClick={() => handleRequestFile(index)}
+                          disabled={!p2pConnected}
+                          className="px-5 py-2 bg-green-500 text-white font-medium rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all whitespace-nowrap"
+                        >
+                          开始传输
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleDownloadFile(index)}
+                          className="px-5 py-2 bg-blue-500 text-white font-medium rounded-lg hover:bg-blue-600 transition-all whitespace-nowrap"
+                        >
+                          保存文件
+                        </button>
+                      )}
+                    </>
+                  )}
+
+                  {host && (
+                    <button
+                      onClick={() => handleRemoveFile(index)}
+                      className="px-4 py-2 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-all border border-gray-300"
+                    >
+                      删除
+                    </button>
+                  )}
                 </div>
-              )}
-            </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 发送方添加文件按钮 */}
+          {host && (
+            <button
+              onClick={handleAddMoreFiles}
+              className="w-full py-2 px-4 bg-blue-500 text-white font-medium rounded-lg hover:bg-blue-600 transition-all"
+            >
+              添加文件
+            </button>
           )}
         </div>
       )}
 
-      {/* 成员列表 */}
-      <div className="members-section">
-        <h3 className="members-title">
-          📋 房间成员 ({currentRoom.members.length})
-        </h3>
-
-        <div className="members-list">
-          {currentRoom.members.map((member) => (
-            <div
-              key={member.deviceId}
-              className={`member-item ${member.role === 'host' ? 'host' : ''}`}
+      {/* 没有文件时的提示（仅发送方） */}
+      {host && (!currentRoom.fileList || currentRoom.fileList.length === 0) && (
+        <div className="mb-6">
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center">
+            <p className="text-gray-700 font-medium mb-3">还没有添加文件</p>
+            <button
+              onClick={handleAddMoreFiles}
+              className="px-6 py-3 bg-blue-500 text-white font-medium rounded-lg hover:bg-blue-600 transition-all"
             >
-              <div className="member-avatar">
-                {member.role === 'host' ? '👑' : '👤'}
-              </div>
-
-              <div className="member-info">
-                <div className="member-name">
-                  {member.deviceName}
-                  {member.role === 'host' && (
-                    <span className="host-badge">房主</span>
-                  )}
-                </div>
-                <div className="member-status">
-                  {getMemberStatusIcon(member)} {getMemberStatusText(member)}
-                </div>
-              </div>
-
-              {/* 进度条（仅在传输中显示） */}
-              {member.role !== 'host' && member.progress !== undefined && member.progress > 0 && (
-                <div className="member-progress">
-                  <div className="progress-bar-small">
-                    <div
-                      className="progress-fill-small"
-                      style={{ width: `${member.progress}%` }}
-                    />
-                  </div>
-                  <div className="progress-percentage">
-                    {member.progress.toFixed(0)}%
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* 接收完成显示 - 多文件（非房主） */}
-      {!host && hasDownload && isQueueMode && queueDirection === 'receive' && fileQueue.length > 0 && (
-        <div className="download-complete" style={{
-          background: 'linear-gradient(to right, #10b981, #059669)',
-          color: 'white',
-          padding: '1.5rem',
-          borderRadius: '0.75rem',
-          marginBottom: '1.5rem'
-        }}>
-          <h3 style={{ fontSize: '1.5rem', fontWeight: 'bold', marginBottom: '1rem', textAlign: 'center' }}>
-            ✅ 文件接收完成！
-          </h3>
-          <div style={{
-            background: 'rgba(255, 255, 255, 0.1)',
-            borderRadius: '0.5rem',
-            padding: '1rem',
-            marginBottom: '1rem',
-            maxHeight: '15rem',
-            overflowY: 'auto'
-          }}>
-            <p style={{ fontWeight: 600, marginBottom: '0.5rem' }}>已接收的文件：</p>
-            {fileQueue.filter(item => item.status === 'completed').map((item, idx) => (
-              <div key={idx} style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '0.5rem',
-                padding: '0.5rem 0',
-                borderBottom: '1px solid rgba(255, 255, 255, 0.2)',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}>
-                  <span>✓</span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '0.875rem', fontWeight: 500 }}>{item.metadata.name}</div>
-                    <div style={{ fontSize: '0.75rem', opacity: 0.75 }}>{formatFileSize(item.metadata.size)}</div>
-                  </div>
-                </div>
-                <button
-                  onClick={() => handleDownloadFile(item.metadata.name)}
-                  style={{
-                    background: 'white',
-                    color: '#059669',
-                    padding: '0.5rem 1rem',
-                    borderRadius: '0.5rem',
-                    fontSize: '0.875rem',
-                    fontWeight: 600,
-                    border: 'none',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                  }}
-                  onMouseOver={(e) => e.currentTarget.style.background = '#f3f4f6'}
-                  onMouseOut={(e) => e.currentTarget.style.background = 'white'}
-                >
-                  ⬇️ 下载
-                </button>
-              </div>
-            ))}
+              添加文件
+            </button>
           </div>
-          <p style={{ fontSize: '0.875rem', textAlign: 'center', opacity: 0.9 }}>
-            💡 点击"下载"按钮可重新下载文件
-          </p>
         </div>
       )}
 
-      {/* 接收完成显示 - 单文件（非房主） */}
-      {!host && hasDownload && !isQueueMode && fileInfo && (
-        <div className="download-complete" style={{
-          background: 'linear-gradient(to right, #10b981, #059669)',
-          color: 'white',
-          padding: '1.5rem',
-          borderRadius: '0.75rem',
-          marginBottom: '1.5rem'
-        }}>
-          <h3 style={{ fontSize: '1.5rem', fontWeight: 'bold', marginBottom: '1rem', textAlign: 'center' }}>
-            ✅ 文件接收完成！
-          </h3>
-          <div style={{
-            background: 'rgba(255, 255, 255, 0.1)',
-            borderRadius: '0.5rem',
-            padding: '1rem',
-            marginBottom: '1rem',
-          }}>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '1rem',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flex: 1 }}>
-                <div style={{ fontSize: '2rem' }}>📄</div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.25rem' }}>
-                    {fileInfo.name}
-                  </div>
-                  <div style={{ fontSize: '0.875rem', opacity: 0.75 }}>
-                    {formatFileSize(fileInfo.size)}
-                  </div>
-                </div>
+      {/* 传输进度显示 */}
+      {isTransferring && transferProgress && (
+        <div className="mb-6">
+          <div className="bg-gray-50 border border-gray-200 p-5 rounded-lg">
+            <div className="text-center mb-4">
+              <div className="text-base font-medium text-gray-900">
+                {transferProgress.direction === 'send' ? '正在发送...' : '正在接收...'}
               </div>
-              <button
-                onClick={() => handleDownloadFile(fileInfo.name)}
-                style={{
-                  background: 'white',
-                  color: '#059669',
-                  padding: '0.75rem 1.5rem',
-                  borderRadius: '0.5rem',
-                  fontSize: '1rem',
-                  fontWeight: 600,
-                  border: 'none',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s',
-                }}
-                onMouseOver={(e) => e.currentTarget.style.background = '#f3f4f6'}
-                onMouseOut={(e) => e.currentTarget.style.background = 'white'}
-              >
-                ⬇️ 下载
-              </button>
+            </div>
+            <div>
+              <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
+                <div
+                  className="bg-blue-500 h-2 rounded-full transition-all"
+                  style={{ width: `${transferProgress.progress}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-sm text-gray-600">
+                <span>{transferProgress.progress.toFixed(1)}%</span>
+                <span>{transferProgress.speedMB} MB/s</span>
+              </div>
             </div>
           </div>
-          <p style={{ fontSize: '0.875rem', textAlign: 'center', opacity: 0.9 }}>
-            💡 点击"下载"按钮可重新下载文件
-          </p>
         </div>
       )}
 
       {/* 提示信息 */}
-      {!hasDownload && (
-        <div className="room-tips">
-          {host ? (
-            <>
-              <p>💡 等待成员加入后，点击"开始广播"向所有成员发送文件</p>
-              <p>⚠️ 传输过程中请保持连接，直到所有成员接收完成</p>
-            </>
-          ) : (
-            <>
-              <p>💡 等待房主开始传输文件</p>
-              <p>📥 接收完成后文件会自动下载</p>
-            </>
-          )}
+      {!isTransferring && (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+          <div className="space-y-2 text-sm text-gray-600">
+            {host ? (
+              <>
+                <p>接收方输入取件码后，可以点击任意文件进行下载</p>
+                <p>你可以随时添加或删除文件，接收方会实时看到更新</p>
+                <p>传输过程中请保持网络连接</p>
+              </>
+            ) : (
+              <>
+                <p>点击任意文件即可开始下载</p>
+                <p>每个文件都可以单独下载，不需要一次性下载全部</p>
+                <p>文件列表会实时更新</p>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>

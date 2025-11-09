@@ -15,6 +15,7 @@ export function useRoom() {
     resetRoom,
     isQueueMode,
     fileQueue,
+    setP2pConnected,
   } = useAppStore();
 
   const [isCreating, setIsCreating] = useState(false);
@@ -97,6 +98,8 @@ export function useRoom() {
    */
   const leaveRoom = useCallback(() => {
     roomManager.leaveRoom();
+    // 清理文件传输状态
+    fileTransferManager.fullReset();
     resetRoom();
     setError(null);
   }, [resetRoom]);
@@ -143,6 +146,18 @@ export function useRoom() {
       setError(error);
     };
 
+    // P2P连接建立
+    const handleP2PConnected = ({ peer, direction }: { peer: string; direction: string }) => {
+      console.log('[useRoom] P2P connection established:', peer, direction);
+      setP2pConnected(true);
+    };
+
+    // P2P连接关闭
+    const handleP2PDisconnected = ({ peer }: { peer: string }) => {
+      console.log('[useRoom] P2P connection closed:', peer);
+      setP2pConnected(false);
+    };
+
     // 成员加入
     const handleMemberJoined = () => {
       // 房间更新事件会处理成员列表
@@ -171,6 +186,8 @@ export function useRoom() {
 
     eventBus.on('room:updated', handleRoomUpdate);
     eventBus.on('room:error', handleRoomError);
+    eventBus.on('p2p:connection:open', handleP2PConnected);
+    eventBus.on('p2p:connection:close', handleP2PDisconnected);
     eventBus.on('room:member-joined', handleMemberJoined);
     eventBus.on('room:member-left', handleMemberLeft);
     eventBus.on('transfer:broadcast-progress', handleBroadcastProgress);
@@ -178,11 +195,13 @@ export function useRoom() {
     return () => {
       eventBus.off('room:updated', handleRoomUpdate);
       eventBus.off('room:error', handleRoomError);
+      eventBus.off('p2p:connection:open', handleP2PConnected);
+      eventBus.off('p2p:connection:close', handleP2PDisconnected);
       eventBus.off('room:member-joined', handleMemberJoined);
       eventBus.off('room:member-left', handleMemberLeft);
       eventBus.off('transfer:broadcast-progress', handleBroadcastProgress);
     };
-  }, [setCurrentRoom, updateRoomMembers, setBroadcastProgress, updateMemberProgress]);
+  }, [setCurrentRoom, updateRoomMembers, setBroadcastProgress, updateMemberProgress, setP2pConnected]);
 
   /**
    * 判断是否是房主
@@ -198,6 +217,33 @@ export function useRoom() {
     return roomManager.getOtherMembers();
   }, []);
 
+  /**
+   * 更新房间文件列表（房主：添加/删除文件）
+   */
+  const updateRoomFiles = useCallback((fileList: FileMetadata[]) => {
+    try {
+      roomManager.updateRoomFiles(fileList);
+    } catch (err) {
+      const errorMsg = (err as Error).message;
+      console.error('[useRoom] Failed to update room files:', errorMsg);
+      setError(errorMsg);
+    }
+  }, []);
+
+  /**
+   * 请求文件（接收方：点击开始传输）
+   */
+  const requestFile = useCallback((fileIndex: number) => {
+    try {
+      roomManager.requestFile(fileIndex);
+      console.log('[useRoom] Requested file:', fileIndex);
+    } catch (err) {
+      const errorMsg = (err as Error).message;
+      console.error('[useRoom] Failed to request file:', errorMsg);
+      setError(errorMsg);
+    }
+  }, []);
+
   return {
     currentRoom,
     isCreating,
@@ -209,5 +255,7 @@ export function useRoom() {
     startBroadcast,
     isHost,
     getOtherMembers,
+    updateRoomFiles,
+    requestFile,
   };
 }
