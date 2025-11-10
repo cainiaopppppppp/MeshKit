@@ -167,8 +167,8 @@ export function FileQueue({ queue, isSender = false, onRemove }: FileQueueProps)
       {queue.length > 0 && (
         <div className="mt-4 p-3 bg-gray-50 rounded-lg">
           <p className="text-xs text-gray-600">
-            💡 <strong>提示:</strong> 文件将依次传输
-            {!isSender && '，完成后自动下载'}
+            💡 <strong>提示:</strong> 这是传输的文件
+            {!isSender && '，完成后点击下载'}
           </p>
         </div>
       )}

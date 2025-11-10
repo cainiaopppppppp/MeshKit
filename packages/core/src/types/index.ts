@@ -14,6 +14,7 @@ export interface FileMetadata {
   size: number;
   type: string;
   totalChunks?: number;
+  index?: number; // 文件在队列中的索引（用于房间模式同步）
 }
 
 /**
@@ -107,7 +108,7 @@ export interface P2PConfig {
 
 export interface SignalingMessage {
   type: 'register' | 'device-list' | 'offer' | 'answer' | 'ice-candidate' | 'heartbeat'
-      | 'create-room' | 'join-room' | 'leave-room' | 'room-update' | 'start-broadcast' | 'room-error'
+      | 'create-room' | 'join-room' | 'leave-room' | 'room-update' | 'update-member-status' | 'start-broadcast' | 'room-error'
       | 'update-room-files' | 'request-file' | 'file-request';
   deviceId?: string;
   deviceName?: string;
@@ -119,6 +120,8 @@ export interface SignalingMessage {
   roomId?: string;
   room?: Room;
   error?: string;
+  status?: 'waiting' | 'receiving' | 'completed' | 'failed';
+  progress?: number;
   // 文件相关字段
   fileList?: FileMetadata[];
   fileIndex?: number;

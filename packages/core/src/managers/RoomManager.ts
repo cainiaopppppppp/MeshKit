@@ -53,8 +53,10 @@ export class RoomManager {
       throw new Error('设备未初始化');
     }
 
-    const isMultiFile = fileList && fileList.length > 1;
-    console.log('[RoomManager] 创建房间...', isMultiFile ? `多文件模式 (${fileList.length} 个文件)` : '单文件模式', fileInfo);
+    // 确保总是有fileList，即使是单文件模式
+    const actualFileList = fileList && fileList.length > 0 ? fileList : [fileInfo];
+    const isMultiFile = actualFileList.length > 1;
+    console.log('[RoomManager] 创建房间...', isMultiFile ? `多文件模式 (${actualFileList.length} 个文件)` : '单文件模式', fileInfo);
 
     // 发送创建房间请求到信令服务器
     signalingClient.send({
@@ -63,7 +65,7 @@ export class RoomManager {
       deviceName: this.myDeviceName!,
       data: {
         fileInfo,
-        fileList: isMultiFile ? fileList : undefined,
+        fileList: actualFileList,
         isMultiFile
       }
     });
@@ -331,6 +333,29 @@ export class RoomManager {
       type: 'update-room-files',
       roomId: this.currentRoom.id,
       fileList
+    });
+
+    // 触发 room:updated 事件，让 React 状态更新
+    eventBus.emit('room:updated', { room: this.currentRoom });
+  }
+
+  /**
+   * 更新成员状态（接收方调用，通知房主传输状态）
+   */
+  updateMemberStatus(status: 'waiting' | 'receiving' | 'completed' | 'failed', progress?: number): void {
+    if (!this.currentRoom || !this.myDeviceId) {
+      return;
+    }
+
+    console.log('[RoomManager] 更新成员状态:', status, progress);
+
+    // 发送状态更新到信令服务器
+    signalingClient.send({
+      type: 'update-member-status',
+      roomId: this.currentRoom.id,
+      deviceId: this.myDeviceId,
+      status,
+      progress
     });
   }
 

@@ -255,7 +255,28 @@ function App() {
   // 下载特定文件（用于多文件队列）
   const handleDownloadFile = async (filename: string) => {
     try {
-      // 尝试从 IndexedDB 获取文件
+      // 优先从 fileQueue 的 receivedBlob 获取（支持大文件）
+      const queueItem = fileQueue.find(item => item.metadata.name === filename);
+
+      if (queueItem?.receivedBlob) {
+        console.log('[App] Downloading file from queue receivedBlob:', filename);
+
+        // 创建下载链接
+        const url = URL.createObjectURL(queueItem.receivedBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        console.log('[App] File downloaded from queue:', filename);
+        return;
+      }
+
+      // 如果 queue 中没有，尝试从 IndexedDB 获取（小文件）
+      console.log('[App] Trying to download file from IndexedDB:', filename);
       const files = await fileStorage.getAllFiles();
       const file = files.find(f => f.filename === filename);
 
@@ -274,7 +295,7 @@ function App() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      console.log('[App] File downloaded:', filename);
+      console.log('[App] File downloaded from IndexedDB:', filename);
     } catch (error) {
       console.error('[App] Failed to download file:', error);
       alert('下载失败：' + (error as Error).message);
@@ -501,15 +522,16 @@ function App() {
                 {/* 发送进度 */}
                 {isTransferring && transferProgress && transferProgress.direction === 'send' && (
                   <div className="mt-4">
-                    <div className="w-full bg-gray-200 rounded-full h-3 mb-2">
+                    <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
+                      <span className="font-medium">{transferProgress.progress.toFixed(1)}%</span>
+                      <span>{transferProgress.speedMB} MB/s</span>
+                      <span>剩余 {transferProgress.remainingTime}</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-3">
                       <div
                         className="bg-gradient-to-r from-primary-500 to-secondary-500 h-3 rounded-full transition-all"
                         style={{ width: `${transferProgress.progress}%` }}
                       />
-                    </div>
-                    <div className="flex justify-between text-sm text-gray-600">
-                      <span>速度: {transferProgress.speedMB} MB/s</span>
-                      <span>剩余: {transferProgress.remainingTime}</span>
                     </div>
                   </div>
                 )}
@@ -552,15 +574,16 @@ function App() {
                         <p className="text-sm text-gray-600 mt-1">流式下载中</p>
                       )}
                     </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
+                    <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
+                      <span className="font-medium">{transferProgress.progress.toFixed(1)}%</span>
+                      <span>{transferProgress.speedMB} MB/s</span>
+                      <span>剩余 {transferProgress.remainingTime}</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-3">
                       <div
-                        className="bg-blue-500 h-2 rounded-full transition-all"
+                        className="bg-blue-500 h-3 rounded-full transition-all"
                         style={{ width: `${transferProgress.progress}%` }}
                       />
-                    </div>
-                    <div className="flex justify-between text-sm text-gray-600">
-                      <span>{transferProgress.speedMB} MB/s</span>
-                      <span>{transferProgress.remainingTime}</span>
                     </div>
                     {isStreamingDownload && (
                       <div className="mt-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">

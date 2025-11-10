@@ -15,11 +15,11 @@ const peerHttpServer = http.createServer(peerApp);
 // 创建 PeerJS 服务器
 const peerServer = ExpressPeerServer(peerHttpServer, {
   debug: true,
-  path: '/',  // PeerJS子路径，与客户端期望的路径匹配
+  path: '/',  // 内部路径设为根路径，因为已经挂载到 /peerjs
   allow_discovery: true,
 });
 
-// 挂载 PeerJS 服务器到 /mypeerjs 路径
+// 挂载 PeerJS 服务器到 /peerjs 路径
 peerApp.use('/peerjs', peerServer);
 
 // PeerJS根路径响应
@@ -301,18 +301,89 @@ wss.on('connection', (ws, req) => {
               throw new Error('房间不存在');
             }
 
+            // 更新请求者的状态为 'receiving'
+            const requesterId = data.requesterId || deviceId;
+            const member = room.members.find(m => m.deviceId === requesterId);
+            if (member) {
+              member.status = 'receiving';
+              member.progress = 0;
+              console.log(`📥 成员状态更新: ${member.deviceName} -> receiving`);
+
+              // 广播房间更新给所有成员
+              broadcastRoomUpdate(room);
+            }
+
             // 转发文件请求给房主
             const hostDevice = devices.get(room.hostId);
             if (hostDevice && hostDevice.ws.readyState === WebSocket.OPEN) {
               hostDevice.ws.send(JSON.stringify({
                 type: 'file-request',
                 fileIndex: data.fileIndex,
-                requesterId: data.requesterId || deviceId,
+                requesterId: requesterId,
                 roomId: data.roomId
               }));
               console.log(`📥 文件请求: 房间 ${data.roomId}, 文件索引 ${data.fileIndex}, 请求者 ${deviceId}`);
             } else {
               throw new Error('房主不在线');
+            }
+          } catch (error) {
+            ws.send(JSON.stringify({
+              type: 'room-error',
+              error: error.message
+            }));
+          }
+          break;
+
+        case 'update-room-files':
+          // 更新房间文件列表（房主添加/删除文件）
+          try {
+            const room = rooms.get(data.roomId);
+            if (!room) {
+              throw new Error('房间不存在');
+            }
+
+            if (room.hostId !== deviceId) {
+              throw new Error('只有主持人可以更新文件列表');
+            }
+
+            // 更新房间文件列表
+            room.fileList = data.fileList;
+            room.isMultiFile = data.fileList && data.fileList.length > 1;
+
+            console.log(`📝 更新房间文件列表: 房间 ${data.roomId}, 共 ${data.fileList?.length || 0} 个文件`);
+
+            // 广播房间更新给所有成员
+            broadcastRoomUpdate(room);
+          } catch (error) {
+            ws.send(JSON.stringify({
+              type: 'room-error',
+              error: error.message
+            }));
+          }
+          break;
+
+        case 'update-member-status':
+          // 更新成员状态（接收方通知房主）
+          try {
+            const room = rooms.get(data.roomId);
+            if (!room) {
+              throw new Error('房间不存在');
+            }
+
+            // 查找成员并更新状态
+            const member = room.members.find(m => m.deviceId === data.deviceId);
+            if (member) {
+              member.status = data.status;
+              if (data.progress !== undefined) {
+                member.progress = data.progress;
+              }
+
+              console.log(`✅ 成员状态更新: ${member.deviceName} -> ${data.status}${data.progress !== undefined ? ` (${data.progress}%)` : ''}`);
+
+              // 广播房间更新给所有成员
+              broadcastRoomUpdate(room);
+            } else {
+              console.warn(`⚠️ 未找到成员: ${data.deviceId} 在房间 ${data.roomId}`);
             }
           } catch (error) {
             ws.send(JSON.stringify({
@@ -442,8 +513,8 @@ peerHttpServer.listen(PEER_PORT, '0.0.0.0', () => {
   console.log('🔗 PeerJS服务器已启动！');
   console.log('=================================');
   console.log('');
-  console.log(`   http://${localIP}:${PEER_PORT}/mypeerjs`);
-  console.log(`   http://localhost:${PEER_PORT}/mypeerjs`);
+  console.log(`   http://${localIP}:${PEER_PORT}/peerjs`);
+  console.log(`   http://localhost:${PEER_PORT}/peerjs`);
   console.log('');
   console.log('💡 用于WebRTC P2P连接建立');
   console.log('=================================');
