@@ -10,6 +10,19 @@ import type { FileMetadata, ChunkData, TransferDirection, FileQueueItem } from '
 // @ts-ignore - StreamSaver doesn't have types
 import streamSaver from 'streamsaver';
 
+/**
+ * 单个文件的接收状态
+ */
+interface FileReceiveState {
+  metadata: FileMetadata;
+  chunks: Map<number, ArrayBuffer>;
+  receivedChunkCount: number;
+  blobParts: Blob[];
+  nextBatchIndex: number;
+  transferStartTime: number;
+  transferredBytes: number;
+}
+
 export class FileTransferManager {
   // 单文件模式（向后兼容）
   private currentFile: File | null = null;
@@ -35,7 +48,7 @@ export class FileTransferManager {
   private broadcastProgress: Map<string, number> = new Map(); // deviceId -> progress (0-100)
   private broadcastLastAcked: Map<string, number> = new Map(); // deviceId -> lastAckedIndex
 
-  // 接收状态
+  // 接收状态（单文件模式 - 向后兼容）
   private receiveMetadata: FileMetadata | null = null;
   private receiveConnection: DataConnection | null = null;
   private receiveChunks: Map<number, ArrayBuffer> = new Map(); // 使用Map存储，支持乱序
@@ -45,6 +58,9 @@ export class FileTransferManager {
   private downloadBlob: Blob | null = null;
   private downloadFilename: string = '';
   private readonly BATCH_SIZE = 100; // 每100个chunks合并一次（100MB）
+
+  // 多文件并发接收状态（Room模式）
+  private fileReceiveStates: Map<number, FileReceiveState> = new Map(); // fileIndex -> ReceiveState
 
   // 流式下载状态
   private streamWriter: WritableStreamDefaultWriter | null = null;
@@ -236,8 +252,10 @@ export class FileTransferManager {
    * @param skipValidation 跳过文件验证（Room模式按需传输时使用，避免大文件阻塞主线程）
    */
   async selectFiles(files: File[], skipValidation: boolean = false): Promise<boolean> {
-    if (this.isTransferring) {
-      console.warn('[FileTransferManager] Transfer in progress');
+    // 只在非房间模式下检查传输状态
+    // 房间模式允许在传输时动态管理文件队列
+    if (!skipValidation && this.isTransferring) {
+      console.warn('[FileTransferManager] Transfer in progress (P2P mode)');
       return false;
     }
 
@@ -305,10 +323,13 @@ export class FileTransferManager {
 
   /**
    * 继续添加文件到队列（不清空已有文件）
+   * @param skipValidation 是否跳过文件验证（Room模式可跳过，避免大文件阻塞）
    */
-  async appendFiles(files: File[]): Promise<boolean> {
-    if (this.isTransferring) {
-      console.warn('[FileTransferManager] Transfer in progress');
+  async appendFiles(files: File[], skipValidation = false): Promise<boolean> {
+    // 只在非房间模式下检查传输状态
+    // 房间模式允许在传输时动态添加文件到队列
+    if (!skipValidation && this.isTransferring) {
+      console.warn('[FileTransferManager] Transfer in progress (P2P mode)');
       return false;
     }
 
@@ -321,13 +342,21 @@ export class FileTransferManager {
 
     // 验证所有文件可读性
     const validatedFiles: File[] = [];
-    for (const file of files) {
-      try {
-        console.log(`[FileTransferManager] Validating: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
-        await this.validateFileReadable(file);
-        validatedFiles.push(file);
-      } catch (error) {
-        console.error(`[FileTransferManager] File validation failed for ${file.name}:`, error);
+
+    if (skipValidation) {
+      // Room模式：跳过验证，避免大文件阻塞，直接使用所有文件
+      validatedFiles.push(...files);
+      console.log(`[FileTransferManager] ⚡ Skipped validation for ${files.length} files (Room mode - will validate on demand)`);
+    } else {
+      // P2P模式：立即验证所有文件
+      for (const file of files) {
+        try {
+          console.log(`[FileTransferManager] Validating: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+          await this.validateFileReadable(file);
+          validatedFiles.push(file);
+        } catch (error) {
+          console.error(`[FileTransferManager] File validation failed for ${file.name}:`, error);
+        }
       }
     }
 
@@ -336,8 +365,15 @@ export class FileTransferManager {
       return false;
     }
 
-    // 获取当前队列的最大索引
-    const startIndex = this.fileQueue.length;
+    // 获取当前队列中的最大索引（不是队列长度！）
+    // 因为删除文件后，队列长度 != 最大索引
+    // 例如：删除 index=1 后，队列 [0,2,3] 的 length=3 但 maxIndex=3
+    const maxIndex = this.fileQueue.length > 0
+      ? Math.max(...this.fileQueue.map(item => item.index))
+      : -1;
+    const startIndex = maxIndex + 1;
+
+    console.log(`[FileTransferManager] Current max index: ${maxIndex}, new files will start from index: ${startIndex}`);
 
     // 添加新文件到队列
     const newItems = validatedFiles.map((file, idx) => ({
@@ -396,15 +432,45 @@ export class FileTransferManager {
 
     console.log('[FileTransferManager] Creating receive queue with', fileList.length, 'files');
 
+    // 保存旧队列，用于保留已接收文件的状态
+    const oldQueue = this.fileQueue || [];
+
     // 创建接收队列（没有实际的 File 对象，只有元数据）
-    this.fileQueue = fileList.map((metadata, index) => ({
-      file: null as any, // 接收方没有实际的 File 对象
-      index,
-      metadata,
-      status: 'pending',
-      progress: 0,
-      selected: true, // 用户已经选择了这些文件
-    }));
+    // 使用 metadata 中的 index（如果存在），否则使用 map 的 index
+    this.fileQueue = fileList.map((metadata, mapIndex) => {
+      const index = metadata.index !== undefined ? metadata.index : mapIndex;
+
+      // 尝试从旧队列中找到相同的文件（根据索引或文件名+大小）
+      const oldItem = oldQueue.find(
+        item =>
+          item.index === index ||
+          (item.metadata.name === metadata.name && item.metadata.size === metadata.size)
+      );
+
+      // 如果找到旧的项且已接收，保留其状态
+      if (oldItem && oldItem.receivedBlob) {
+        console.log('[FileTransferManager] Preserving received state for file:', metadata.name);
+        return {
+          file: null as any,
+          index,
+          metadata,
+          status: oldItem.status,
+          progress: oldItem.progress,
+          selected: true,
+          receivedBlob: oldItem.receivedBlob, // 保留已接收的 blob
+        };
+      }
+
+      // 新文件或未接收的文件
+      return {
+        file: null as any,
+        index,
+        metadata,
+        status: 'pending',
+        progress: 0,
+        selected: true,
+      };
+    });
 
     this.isQueueMode = true;
     this.queueDirection = 'receive'; // 标记为接收队列
@@ -516,9 +582,10 @@ export class FileTransferManager {
     console.log(`[FileTransferManager] 📋 Received file list: ${data.files.length} files, ${(data.totalSize / 1024 / 1024).toFixed(2)} MB total`);
 
     // 创建接收队列（默认不选中，由用户选择）
-    this.fileQueue = data.files.map((metadata, index) => ({
+    // 使用 metadata 中的 index（如果存在），否则使用 map 的 index
+    this.fileQueue = data.files.map((metadata, mapIndex) => ({
       file: null as any, // 接收方没有File对象
-      index,
+      index: metadata.index !== undefined ? metadata.index : mapIndex, // 优先使用 metadata 中的索引
       metadata,
       status: 'pending',
       progress: 0,
@@ -722,6 +789,18 @@ export class FileTransferManager {
     // 发送文件内容（重用现有的chunk发送逻辑）
     this.transferStartTime = Date.now();
     this.transferredBytes = 0;
+    this.isTransferring = true;
+    this.transferDirection = 'send';
+
+    // 触发 transfer:started 事件（发送方）
+    eventBus.emit('transfer:started', {
+      direction: 'send',
+      file: {
+        name: file.name,
+        size: file.size,
+        type: file.type,
+      },
+    });
 
     for (let i = 0; i < totalChunks; i++) {
       await this.waitForBufferDrain();
@@ -743,8 +822,15 @@ export class FileTransferManager {
       this.transferredBytes += chunk.byteLength;
       queueItem.progress = ((i + 1) / totalChunks) * 100;
 
+      // 更新发送进度（基于ACK确认）
+      this.sendProgress = ((this.lastAckedIndex + 1) / totalChunks) * 100;
+
+      // 发送进度更新事件
       if (i % 10 === 0 || i === totalChunks - 1) {
         eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+
+        // 同时发送标准的进度事件，让进度条显示
+        this.emitProgress('send', file.size);
       }
 
       if (sendDelay > 0) {
@@ -1705,34 +1791,87 @@ export class FileTransferManager {
           type: data.mimeType!,
         },
       });
+
+      // 如果在房间模式下，通知房主更新成员状态为receiving
+      this.notifyRoomStatusReceiving();
     } else if (data.type === 'chunk') {
       // 接收分块
       if (data.index !== undefined && data.data) {
-        this.receiveChunks.set(data.index, data.data);
-        this.receivedChunkCount++;
-        this.transferredBytes += data.data.byteLength;
+        // 检查是否有fileIndex（并发模式）
+        if (data.fileIndex !== undefined && this.fileReceiveStates.has(data.fileIndex)) {
+          // 并发模式：使用独立的接收状态
+          const fileIndex = data.fileIndex;
+          const receiveState = this.fileReceiveStates.get(fileIndex)!;
 
-        // 发送ACK确认（关键！让发送方知道已收到）
-        this.sendAck(data.index);
+          receiveState.chunks.set(data.index, data.data);
+          receiveState.receivedChunkCount++;
+          receiveState.transferredBytes += data.data.byteLength;
 
-        // 尝试合并连续的chunks，避免内存溢出（关键优化！）
-        // 关键修复：必须await，确保流式写入完成
-        await this.tryMergeBatch();
+          // 发送ACK确认
+          this.sendAck(data.index);
 
-        // 发送进度更新（每10个chunk或接近完成）
-        if (this.receiveMetadata) {
-          if (this.receivedChunkCount % 10 === 0 ||
-              this.receivedChunkCount === this.receiveMetadata.totalChunks) {
-            this.emitProgress('receive', this.receiveMetadata.size);
+          // 尝试合并连续的chunks
+          await this.tryMergeBatchForFile(fileIndex);
+
+          // 更新文件进度
+          const currentItem = this.fileQueue.find(item => item.index === fileIndex);
+          if (currentItem && receiveState.metadata.totalChunks) {
+            currentItem.progress = (receiveState.receivedChunkCount / receiveState.metadata.totalChunks) * 100;
+
+            // 每10个chunk或接近完成时发送进度更新
+            if (receiveState.receivedChunkCount % 10 === 0 ||
+                receiveState.receivedChunkCount === receiveState.metadata.totalChunks) {
+              eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+
+              // 发送进度事件
+              const elapsed = Date.now() - receiveState.transferStartTime;
+              const speed = elapsed > 0 ? (receiveState.transferredBytes / elapsed) * 1000 : 0;
+              const remaining = receiveState.metadata.size - receiveState.transferredBytes;
+              const remainingTime = speed > 0 ? remaining / speed : 0;
+
+              eventBus.emit('transfer:progress', {
+                direction: 'receive',
+                progress: currentItem.progress,
+                transferred: receiveState.transferredBytes,
+                total: receiveState.metadata.size,
+                speed,
+                remaining: remainingTime,
+                speedMB: (speed / (1024 * 1024)).toFixed(2),
+                remainingTime: this.formatTime(remainingTime),
+              });
+
+              // 如果在房间模式下，通知房主当前的接收进度
+              this.notifyRoomStatusProgress(currentItem.progress);
+            }
           }
-        }
+        } else {
+          // 向后兼容：单文件模式
+          this.receiveChunks.set(data.index, data.data);
+          this.receivedChunkCount++;
+          this.transferredBytes += data.data.byteLength;
 
-        // 如果是队列模式，更新当前文件的进度
-        if (this.isQueueMode && this.currentQueueIndex >= 0) {
-          const currentItem = this.fileQueue[this.currentQueueIndex];
-          if (currentItem && this.receiveMetadata) {
-            currentItem.progress = (this.receivedChunkCount / this.receiveMetadata.totalChunks!) * 100;
-            eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+          // 发送ACK确认（关键！让发送方知道已收到）
+          this.sendAck(data.index);
+
+          // 尝试合并连续的chunks，避免内存溢出（关键优化！）
+          // 关键修复：必须await，确保流式写入完成
+          await this.tryMergeBatch();
+
+          // 发送进度更新（每10个chunk或接近完成）
+          if (this.receiveMetadata) {
+            if (this.receivedChunkCount % 10 === 0 ||
+                this.receivedChunkCount === this.receiveMetadata.totalChunks) {
+              this.emitProgress('receive', this.receiveMetadata.size);
+            }
+          }
+
+          // 如果是队列模式，更新当前文件的进度
+          if (this.isQueueMode && this.currentQueueIndex >= 0) {
+            const currentItem = this.fileQueue[this.currentQueueIndex];
+            if (currentItem && this.receiveMetadata) {
+              currentItem.progress = (this.receivedChunkCount / this.receiveMetadata.totalChunks!) * 100;
+              eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+            }
           }
         }
       }
@@ -1750,25 +1889,47 @@ export class FileTransferManager {
     } else if (data.type === 'complete') {
       // 接收完成
       console.log('[FileTransfer] Receive completed, assembling file...');
-      this.clearTransferTimeout();
-      // 关键修复：必须await，确保流关闭完成
-      await this.assembleReceivedFile();
 
-      // 如果是队列模式，标记当前文件为完成
-      if (this.isQueueMode && this.currentQueueIndex >= 0) {
-        const currentItem = this.fileQueue[this.currentQueueIndex];
-        if (currentItem) {
-          currentItem.status = 'completed';
-          currentItem.progress = 100;
+      // 检查是否有fileIndex（并发模式）
+      if (data.fileIndex !== undefined && this.fileReceiveStates.has(data.fileIndex)) {
+        // 并发模式：组装特定文件
+        const fileIndex = data.fileIndex;
+        await this.assembleReceivedFileForIndex(fileIndex);
 
-          eventBus.emit('transfer:file-item-completed', {
-            fileIndex: currentItem.index,
-            file: currentItem.metadata,
-            blob: currentItem.receivedBlob, // 传递接收到的blob
-          });
+        // 清理该文件的接收状态
+        this.fileReceiveStates.delete(fileIndex);
+      } else {
+        // 向后兼容：单文件模式
+        this.clearTransferTimeout();
+        // 关键修复：必须await，确保流关闭完成
+        await this.assembleReceivedFile();
 
-          eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+        // 如果是队列模式，标记当前文件为完成
+        if (this.isQueueMode && this.currentQueueIndex >= 0) {
+          const currentItem = this.fileQueue[this.currentQueueIndex];
+          if (currentItem) {
+            currentItem.status = 'completed';
+            currentItem.progress = 100;
+
+            eventBus.emit('transfer:file-item-completed', {
+              fileIndex: currentItem.index,
+              file: currentItem.metadata,
+              blob: currentItem.receivedBlob, // 传递接收到的blob
+            });
+
+            eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+
+            // 房间模式下，单个文件接收完成后重置 isTransferring
+            // 因为每个文件是独立请求和传输的
+            if (this.queueDirection === 'receive') {
+              this.isTransferring = false;
+              console.log('[FileTransferManager] Room mode: Single file transfer completed, reset isTransferring');
+            }
+          }
         }
+
+        // 如果在房间模式下，通知房主更新成员状态为completed
+        this.notifyRoomStatusCompleted();
       }
     }
   }
@@ -1782,14 +1943,30 @@ export class FileTransferManager {
       return;
     }
 
-    console.log(`[FileTransferManager] 📥 Starting to receive file: ${data.name} (index: ${data.fileIndex})`);
+    const fileIndex = data.fileIndex;
+    console.log(`[FileTransferManager] 📥 Starting to receive file: ${data.name} (index: ${fileIndex})`);
 
-    // 更新当前队列索引
-    this.currentQueueIndex = data.fileIndex;
+    // 为该文件创建独立的接收状态
+    const receiveState: FileReceiveState = {
+      metadata: {
+        name: data.name,
+        size: data.size,
+        type: data.mimeType || '',
+        totalChunks: data.totalChunks,
+      },
+      chunks: new Map(),
+      receivedChunkCount: 0,
+      blobParts: [],
+      nextBatchIndex: 0,
+      transferStartTime: Date.now(),
+      transferredBytes: 0,
+    };
+
+    this.fileReceiveStates.set(fileIndex, receiveState);
 
     // 更新队列项状态
-    if (this.isQueueMode && this.currentQueueIndex >= 0) {
-      const currentItem = this.fileQueue[this.currentQueueIndex];
+    if (this.isQueueMode) {
+      const currentItem = this.fileQueue.find(item => item.index === fileIndex);
       if (currentItem) {
         currentItem.status = 'transferring';
         eventBus.emit('transfer:file-item-started', {
@@ -1800,28 +1977,18 @@ export class FileTransferManager {
       }
     }
 
-    // 准备接收文件（重置接收状态）
-    this.receiveMetadata = {
-      name: data.name,
-      size: data.size,
-      type: data.mimeType || '',
-      totalChunks: data.totalChunks,
-    };
-    this.receiveChunks.clear();
-    this.receiveBlobParts = [];
-    this.nextBatchIndex = 0;
-    this.receivedChunkCount = 0;
-    this.transferStartTime = Date.now();
-    this.transferredBytes = 0;
-    this.isTransferring = true;
-    this.transferDirection = 'receive';
+    // 触发 transfer:started 事件，让UI显示进度条
+    eventBus.emit('transfer:started', {
+      direction: 'receive',
+      file: {
+        name: data.name,
+        size: data.size,
+        type: data.mimeType || '',
+      },
+    });
 
-    // 队列模式不使用流式下载（为了支持多文件下载）
-    this.isStreamingDownload = false;
-
-    // 设置接收超时
-    const timeout = config.get('transfer').timeout;
-    this.setupTransferTimeout(timeout);
+    // 如果在房间模式下，通知房主开始接收
+    this.notifyRoomStatusReceiving();
   }
 
   /**
@@ -1844,6 +2011,54 @@ export class FileTransferManager {
     });
 
     console.log(`[FileTransferManager] 🎉 Received ${successCount}/${totalFiles} files successfully`);
+  }
+
+  /**
+   * 尝试合并特定文件的批次chunks（并发模式）
+   */
+  private async tryMergeBatchForFile(fileIndex: number): Promise<void> {
+    const receiveState = this.fileReceiveStates.get(fileIndex);
+    if (!receiveState) return;
+
+    // 收集从nextBatchIndex开始的连续chunks
+    const batchChunks: ArrayBuffer[] = [];
+    let index = receiveState.nextBatchIndex;
+
+    while (index < receiveState.metadata.totalChunks! && batchChunks.length < this.BATCH_SIZE) {
+      const chunk = receiveState.chunks.get(index);
+      if (!chunk) break; // 遇到缺失的chunk，停止
+
+      batchChunks.push(chunk);
+      index++;
+    }
+
+    // 如果收集到足够的chunks，或者已经是最后一批，就合并
+    if (batchChunks.length >= this.BATCH_SIZE ||
+       (index === receiveState.metadata.totalChunks && batchChunks.length > 0)) {
+
+      console.log(`[FileTransfer] Merging batch for file ${fileIndex}: ${receiveState.nextBatchIndex} to ${index - 1} (${batchChunks.length} chunks)`);
+
+      // 合并成Blob
+      try {
+        const batchBlob = new Blob(batchChunks, {
+          type: receiveState.metadata.type,
+        });
+
+        // 缓存在内存（并发模式不使用流式下载）
+        receiveState.blobParts.push(batchBlob);
+
+        // 删除已合并的chunks，释放内存
+        for (let i = receiveState.nextBatchIndex; i < index; i++) {
+          receiveState.chunks.delete(i);
+        }
+
+        receiveState.nextBatchIndex = index;
+
+        console.log(`[FileTransfer] 🧹 Memory freed for file ${fileIndex}: ${batchChunks.length} chunks, Map size now: ${receiveState.chunks.size}`);
+      } catch (error) {
+        console.error(`[FileTransfer] Failed to merge batch for file ${fileIndex}:`, error);
+      }
+    }
   }
 
   /**
@@ -2067,6 +2282,88 @@ export class FileTransferManager {
   }
 
   /**
+   * 组装特定文件的接收数据（并发模式）
+   */
+  private async assembleReceivedFileForIndex(fileIndex: number): Promise<void> {
+    const receiveState = this.fileReceiveStates.get(fileIndex);
+    if (!receiveState) {
+      console.error(`[FileTransfer] No receive state for file ${fileIndex}`);
+      return;
+    }
+
+    try {
+      console.log(`[FileTransfer] Assembling file ${fileIndex} from ${receiveState.blobParts.length} blob parts`);
+
+      // 合并剩余的chunks
+      const remainingChunks: ArrayBuffer[] = [];
+      for (let i = receiveState.nextBatchIndex; i < receiveState.metadata.totalChunks!; i++) {
+        const chunk = receiveState.chunks.get(i);
+        if (!chunk) {
+          throw new Error(`Missing chunk at index ${i} for file ${fileIndex}`);
+        }
+        remainingChunks.push(chunk);
+      }
+
+      if (remainingChunks.length > 0) {
+        console.log(`[FileTransfer] Merging final ${remainingChunks.length} chunks for file ${fileIndex}`);
+        const finalBlob = new Blob(remainingChunks, {
+          type: receiveState.metadata.type,
+        });
+        receiveState.blobParts.push(finalBlob);
+      }
+
+      // 合并所有Blob部分
+      console.log(`[FileTransfer] Creating final blob for file ${fileIndex} from ${receiveState.blobParts.length} parts`);
+      const blob = new Blob(receiveState.blobParts, {
+        type: receiveState.metadata.type,
+      });
+
+      console.log(`[FileTransfer] File ${fileIndex} assembled successfully: ${receiveState.metadata.name} (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
+
+      // 将blob存储到队列项中
+      const currentItem = this.fileQueue.find(item => item.index === fileIndex);
+      if (currentItem) {
+        currentItem.status = 'completed';
+        currentItem.progress = 100;
+        currentItem.receivedBlob = blob;
+        console.log(`[FileTransfer] Stored blob in queue item ${currentItem.index}`);
+
+        eventBus.emit('transfer:file-item-completed', {
+          fileIndex: currentItem.index,
+          file: currentItem.metadata,
+          blob: currentItem.receivedBlob,
+        });
+
+        eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+
+        // 房间模式下，单个文件接收完成后重置 isTransferring
+        if (this.queueDirection === 'receive') {
+          this.isTransferring = false;
+          console.log('[FileTransferManager] Room mode (concurrent): Single file transfer completed, reset isTransferring');
+        }
+      }
+
+    } catch (error) {
+      console.error(`[FileTransfer] Failed to assemble file ${fileIndex}:`, error);
+
+      // 标记文件为失败
+      const currentItem = this.fileQueue.find(item => item.index === fileIndex);
+      if (currentItem) {
+        currentItem.status = 'failed';
+        currentItem.error = (error as Error).message;
+
+        eventBus.emit('transfer:file-item-failed', {
+          fileIndex: currentItem.index,
+          file: currentItem.metadata,
+          error: error as Error,
+        });
+
+        eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+      }
+    }
+  }
+
+  /**
    * 触发下载
    */
   downloadFile(): boolean {
@@ -2214,6 +2511,56 @@ export class FileTransferManager {
     });
 
     this.reset();
+  }
+
+  /**
+   * 通知房间更新成员状态为接收中（接收方专用）
+   */
+  private notifyRoomStatusReceiving(): void {
+    // 动态导入避免循环依赖
+    import('./RoomManager').then(({ roomManager }) => {
+      const currentRoom = roomManager.getCurrentRoom();
+      if (currentRoom && roomManager.isHost() === false) {
+        // 只有接收方才需要通知房主
+        console.log('[FileTransferManager] Notifying room: transfer receiving');
+        roomManager.updateMemberStatus('receiving', 0);
+      }
+    }).catch(error => {
+      console.error('[FileTransferManager] Failed to notify room status:', error);
+    });
+  }
+
+  /**
+   * 通知房间更新成员接收进度（接收方专用）
+   */
+  private notifyRoomStatusProgress(progress: number): void {
+    // 动态导入避免循环依赖
+    import('./RoomManager').then(({ roomManager }) => {
+      const currentRoom = roomManager.getCurrentRoom();
+      if (currentRoom && roomManager.isHost() === false) {
+        // 只有接收方才需要通知房主
+        roomManager.updateMemberStatus('receiving', progress);
+      }
+    }).catch(error => {
+      console.error('[FileTransferManager] Failed to notify room progress:', error);
+    });
+  }
+
+  /**
+   * 通知房间更新成员状态为完成（接收方专用）
+   */
+  private notifyRoomStatusCompleted(): void {
+    // 动态导入避免循环依赖
+    import('./RoomManager').then(({ roomManager }) => {
+      const currentRoom = roomManager.getCurrentRoom();
+      if (currentRoom && roomManager.isHost() === false) {
+        // 只有接收方才需要通知房主
+        console.log('[FileTransferManager] Notifying room: transfer completed');
+        roomManager.updateMemberStatus('completed', 100);
+      }
+    }).catch(error => {
+      console.error('[FileTransferManager] Failed to notify room status:', error);
+    });
   }
 
   /**
@@ -2385,13 +2732,12 @@ export class FileTransferManager {
       return false;
     }
 
-    console.log('[FileTransferManager] Removing file from queue:', item.metadata.name);
+    console.log('[FileTransferManager] Removing file from queue:', item.metadata.name, 'at index:', index);
     this.fileQueue.splice(fileIndex, 1);
 
-    // 重新索引队列
-    this.fileQueue.forEach((item, idx) => {
-      item.index = idx;
-    });
+    // 🔴 不要重新索引队列！保持其他文件的索引不变
+    // 这对于房间模式非常重要，因为接收方已经记录了文件的索引
+    // 如果重新索引，接收方和发送方的索引就会不匹配
 
     // 如果队列为空，退出队列模式
     if (this.fileQueue.length === 0) {

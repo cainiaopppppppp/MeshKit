@@ -8,7 +8,7 @@ import { fileTransferManager } from '@meshkit/core';
 import { FileQueue } from './FileQueue';
 
 export function CreateRoom() {
-  const { createRoom, isCreating, error } = useRoom();
+  const { createRoom, isCreating, error, updateRoomFiles, currentRoom } = useRoom();
   const { fileQueue, isQueueMode } = useAppStore();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -55,6 +55,20 @@ export function CreateRoom() {
       }
     }
 
+    // 如果已经在房间中，通知房间成员文件列表已更新
+    if (currentRoom) {
+      // 获取当前的文件队列并转换为元数据列表（包含索引）
+      const currentQueue = fileTransferManager.getFileQueue();
+      if (currentQueue && currentQueue.length > 0) {
+        const updatedFileList = currentQueue.map(item => ({
+          ...item.metadata,
+          index: item.index, // 保留文件在队列中的索引
+        }));
+        console.log('[CreateRoom] Notifying room members of file list update:', updatedFileList.length, 'files');
+        updateRoomFiles(updatedFileList);
+      }
+    }
+
     // 清空input
     e.target.value = '';
   };
@@ -89,6 +103,17 @@ export function CreateRoom() {
 
   const handleRemoveFile = (index: number) => {
     fileTransferManager.removeFileFromQueue(index);
+
+    // 如果已经在房间中，通知房间成员文件列表已更新
+    if (currentRoom) {
+      const currentQueue = fileTransferManager.getFileQueue();
+      const updatedFileList = currentQueue.map(item => ({
+        ...item.metadata,
+        index: item.index, // 保留文件在队列中的索引
+      }));
+      console.log('[CreateRoom] Notifying room members after file removal:', updatedFileList.length, 'files');
+      updateRoomFiles(updatedFileList);
+    }
   };
 
   const handleClearAll = () => {
