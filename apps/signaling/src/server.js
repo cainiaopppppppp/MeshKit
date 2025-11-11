@@ -56,6 +56,9 @@ const devices = new Map();
 // 存储所有房间
 const rooms = new Map();
 
+// y-webrtc 相关：存储 topic 订阅关系
+const topics = new Map(); // topic -> Set<ws>
+
 /**
  * 生成6位房间号
  */
@@ -179,7 +182,56 @@ wss.on('connection', (ws, req) => {
     try {
       const data = JSON.parse(message);
 
+      // y-webrtc 协议支持
       switch (data.type) {
+        case 'subscribe':
+          // y-webrtc: 订阅 topics
+          if (data.topics && Array.isArray(data.topics)) {
+            data.topics.forEach(topic => {
+              if (!topics.has(topic)) {
+                topics.set(topic, new Set());
+              }
+              topics.get(topic).add(ws);
+              console.log(`📌 [y-webrtc] 订阅 topic: ${topic}`);
+            });
+          }
+          break;
+
+        case 'unsubscribe':
+          // y-webrtc: 取消订阅 topics
+          if (data.topics && Array.isArray(data.topics)) {
+            data.topics.forEach(topic => {
+              if (topics.has(topic)) {
+                topics.get(topic).delete(ws);
+                if (topics.get(topic).size === 0) {
+                  topics.delete(topic);
+                }
+                console.log(`📍 [y-webrtc] 取消订阅 topic: ${topic}`);
+              }
+            });
+          }
+          break;
+
+        case 'publish':
+          // y-webrtc: 发布消息到 topic
+          if (data.topic && topics.has(data.topic)) {
+            const subscribers = topics.get(data.topic);
+            const messageToSend = JSON.stringify(data);
+
+            subscribers.forEach(subscriber => {
+              // 不发送给自己
+              if (subscriber !== ws && subscriber.readyState === WebSocket.OPEN) {
+                subscriber.send(messageToSend);
+              }
+            });
+          }
+          break;
+
+        case 'ping':
+          // y-webrtc: 心跳
+          ws.send(JSON.stringify({ type: 'pong' }));
+          break;
+
         case 'register':
           deviceId = data.deviceId;
           devices.set(deviceId, {
@@ -399,6 +451,16 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
+    // 清理 y-webrtc 订阅
+    topics.forEach((subscribers, topic) => {
+      if (subscribers.has(ws)) {
+        subscribers.delete(ws);
+        if (subscribers.size === 0) {
+          topics.delete(topic);
+        }
+      }
+    });
+
     if (deviceId) {
       console.log(`👋 设备断开: ${deviceId}`);
       devices.delete(deviceId);

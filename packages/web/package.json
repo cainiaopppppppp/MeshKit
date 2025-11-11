@@ -11,8 +11,14 @@
   },
   "dependencies": {
     "@meshkit/core": "workspace:*",
+    "@types/react-router-dom": "^5.3.3",
+    "idb": "^8.0.3",
+    "peerjs": "^1.5.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-router-dom": "^7.9.5",
+    "y-webrtc": "^10.3.0",
+    "yjs": "^13.6.27",
     "zustand": "^4.4.7"
   },
   "devDependencies": {
