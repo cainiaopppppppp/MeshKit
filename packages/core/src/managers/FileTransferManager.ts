@@ -581,16 +581,45 @@ export class FileTransferManager {
 
     console.log(`[FileTransferManager] 📋 Received file list: ${data.files.length} files, ${(data.totalSize / 1024 / 1024).toFixed(2)} MB total`);
 
+    // 保存旧队列，用于保留已下载文件的状态
+    const oldQueue = this.fileQueue || [];
+
     // 创建接收队列（默认不选中，由用户选择）
     // 使用 metadata 中的 index（如果存在），否则使用 map 的 index
-    this.fileQueue = data.files.map((metadata, mapIndex) => ({
-      file: null as any, // 接收方没有File对象
-      index: metadata.index !== undefined ? metadata.index : mapIndex, // 优先使用 metadata 中的索引
-      metadata,
-      status: 'pending',
-      progress: 0,
-      selected: false, // 默认不选中，等待用户选择
-    }));
+    this.fileQueue = data.files.map((metadata, mapIndex) => {
+      const index = metadata.index !== undefined ? metadata.index : mapIndex;
+
+      // 尝试从旧队列中找到相同的文件（根据索引或文件名+大小）
+      const oldItem = oldQueue.find(
+        item =>
+          item.index === index ||
+          (item.metadata.name === metadata.name && item.metadata.size === metadata.size)
+      );
+
+      // 如果找到旧的项且已接收，保留其状态
+      if (oldItem && oldItem.receivedBlob) {
+        console.log('[FileTransferManager] Preserving received state for file:', metadata.name);
+        return {
+          file: null as any,
+          index,
+          metadata,
+          status: oldItem.status,
+          progress: oldItem.progress,
+          selected: oldItem.selected,
+          receivedBlob: oldItem.receivedBlob, // 保留已接收的 blob
+        };
+      }
+
+      // 新文件或未接收的文件
+      return {
+        file: null as any, // 接收方没有File对象
+        index,
+        metadata,
+        status: 'pending',
+        progress: 0,
+        selected: false, // 默认不选中，等待用户选择
+      };
+    });
 
     this.isQueueMode = true;
     this.queueDirection = 'receive'; // 标记为接收队列
