@@ -5,8 +5,7 @@
 import * as Y from 'yjs';
 import { WebrtcProvider } from 'y-webrtc';
 import type { StickyNote, UserInfo, RoomConfig } from '../types/stickyNote';
-import { notesStorage } from '../utils/NotesStorage';
-import { encryptionHelper } from '../utils/Encryption';
+import { encryptionHelper, type EncryptionMethod } from '../utils/Encryption';
 
 export class StickyNotesRoom {
   private ydoc: Y.Doc | null = null;
@@ -20,12 +19,19 @@ export class StickyNotesRoom {
   private userColor: string = '';
   private password: string = '';
   private enableEncryption: boolean = false;
+  private encryptionMethod: EncryptionMethod = 'AES-256-CBC';
+  private isPasswordVerified: boolean = false;
+  private expirationCheckInterval: NodeJS.Timeout | null = null;
+
+  // 房间有效期配置（24小时，单位：毫秒）
+  private static readonly ROOM_EXPIRATION_TIME = 24 * 60 * 60 * 1000;
 
   // 回调函数
   private onNotesChange?: (notes: StickyNote[]) => void;
   private onUsersChange?: (users: UserInfo[]) => void;
   private onConnectionChange?: (connected: boolean, peerCount: number) => void;
   private onRoomDestroyed?: () => void;
+  private onRoomExpiring?: (remainingTime: number) => void;
 
   /**
    * 创建或加入房间
@@ -35,10 +41,12 @@ export class StickyNotesRoom {
     onUsersChange?: (users: UserInfo[]) => void;
     onConnectionChange?: (connected: boolean, peerCount: number) => void;
     onRoomDestroyed?: () => void;
+    onRoomExpiring?: (remainingTime: number) => void;
   }) {
     this.roomId = config.roomId;
     this.password = config.password || '';
     this.enableEncryption = config.enableEncryption;
+    this.encryptionMethod = config.encryptionMethod || 'AES-256-CBC';
 
     // 生成用户信息
     this.userId = this.generateUserId();
@@ -51,6 +59,7 @@ export class StickyNotesRoom {
       this.onUsersChange = callbacks.onUsersChange;
       this.onConnectionChange = callbacks.onConnectionChange;
       this.onRoomDestroyed = callbacks.onRoomDestroyed;
+      this.onRoomExpiring = callbacks.onRoomExpiring;
     }
 
     // 创建 Yjs 文档
@@ -128,6 +137,13 @@ export class StickyNotesRoom {
     // 从本地加载便签
     await this.loadLocalNotes();
 
+    // 处理加密房间的密码验证
+    // 注意：必须先检查房间是否已是加密房间，而不是只看本地的 enableEncryption
+    await this.handlePasswordVerification();
+
+    // 初始化房间过期检查
+    await this.initializeRoomExpiration();
+
     console.log('[StickyNotesRoom] Joined room:', this.roomId);
   }
 
@@ -142,6 +158,12 @@ export class StickyNotesRoom {
 
     // 保存到本地
     await this.saveToLocal();
+
+    // 清理过期检查定时器
+    if (this.expirationCheckInterval) {
+      clearInterval(this.expirationCheckInterval);
+      this.expirationCheckInterval = null;
+    }
 
     // 销毁连接
     if (this.provider) {
@@ -171,6 +193,20 @@ export class StickyNotesRoom {
       createdBy: this.userId,
     };
 
+    // 如果启用加密，加密便签内容
+    if (this.enableEncryption && this.password && newNote.content) {
+      try {
+        newNote.content = await encryptionHelper.encrypt(
+          newNote.content,
+          this.password,
+          this.encryptionMethod
+        );
+      } catch (error) {
+        console.error('[StickyNotesRoom] Failed to encrypt note:', error);
+        throw new Error('加密便签失败');
+      }
+    }
+
     this.yNotes.set(newNote.id, newNote);
   }
 
@@ -182,6 +218,20 @@ export class StickyNotesRoom {
 
     const note = this.yNotes.get(noteId);
     if (!note) return;
+
+    // 如果启用加密且更新了内容，加密新内容
+    if (this.enableEncryption && this.password && updates.content) {
+      try {
+        updates.content = await encryptionHelper.encrypt(
+          updates.content,
+          this.password,
+          this.encryptionMethod
+        );
+      } catch (error) {
+        console.error('[StickyNotesRoom] Failed to encrypt note update:', error);
+        throw new Error('加密便签失败');
+      }
+    }
 
     // 使用 Yjs transaction 确保原子更新
     this.ydoc.transact(() => {
@@ -204,10 +254,143 @@ export class StickyNotesRoom {
   }
 
   /**
-   * 销毁房间
+   * 处理密码验证
    */
-  destroyRoom() {
+  private async handlePasswordVerification() {
+    if (!this.yMeta) return;
+
+    const existingToken = this.yMeta.get('passwordVerificationToken');
+    const existingMethod = this.yMeta.get('encryptionMethod') as EncryptionMethod | undefined;
+
+    if (existingToken && existingMethod) {
+      // 房间已存在验证token，说明这是一个加密房间
+      console.log('[StickyNotesRoom] Detected encrypted room, verifying password...');
+
+      // 不管用户有没有勾选加密，都需要验证密码
+      if (!this.password) {
+        // 用户没有输入密码
+        console.warn('[StickyNotesRoom] This is an encrypted room, but no password provided!');
+        this.isPasswordVerified = false;
+        this.enableEncryption = true; // 标记房间为加密房间
+        this.encryptionMethod = existingMethod;
+        return;
+      }
+
+      // 验证密码
+      this.isPasswordVerified = await encryptionHelper.verifyPassword(
+        existingToken,
+        this.password,
+        existingMethod
+      );
+
+      if (!this.isPasswordVerified) {
+        console.warn('[StickyNotesRoom] Password verification failed!');
+      } else {
+        console.log('[StickyNotesRoom] Password verified successfully');
+      }
+
+      // 更新为房间的加密设置
+      this.enableEncryption = true;
+      this.encryptionMethod = existingMethod;
+    } else if (this.enableEncryption && this.password) {
+      // 新房间且用户启用了加密，创建验证token
+      console.log('[StickyNotesRoom] Creating password verification token...');
+      const token = await encryptionHelper.createVerificationToken(
+        this.password,
+        this.encryptionMethod
+      );
+      this.yMeta.set('passwordVerificationToken', token);
+      this.yMeta.set('encryptionMethod', this.encryptionMethod);
+      this.isPasswordVerified = true;
+      console.log('[StickyNotesRoom] Password verification token created');
+    } else {
+      // 非加密房间
+      this.isPasswordVerified = true;
+    }
+  }
+
+  /**
+   * 初始化房间过期检查
+   */
+  private async initializeRoomExpiration() {
+    if (!this.yMeta) return;
+
+    // 检查房间是否已有创建时间
+    const existingCreatedAt = this.yMeta.get('createdAt');
+
+    if (!existingCreatedAt) {
+      // 新房间，记录创建时间
+      const now = Date.now();
+      this.yMeta.set('createdAt', now);
+      console.log('[StickyNotesRoom] Room created at:', new Date(now).toISOString());
+    } else {
+      console.log('[StickyNotesRoom] Existing room created at:', new Date(existingCreatedAt).toISOString());
+    }
+
+    // 启动过期检查定时器（每分钟检查一次）
+    this.expirationCheckInterval = setInterval(() => {
+      this.checkRoomExpiration();
+    }, 60 * 1000);
+
+    // 立即检查一次
+    this.checkRoomExpiration();
+  }
+
+  /**
+   * 检查房间是否过期
+   */
+  private checkRoomExpiration() {
+    if (!this.yMeta) return;
+
+    const createdAt = this.yMeta.get('createdAt');
+    if (!createdAt) return;
+
+    const now = Date.now();
+    const elapsed = now - createdAt;
+    const remaining = StickyNotesRoom.ROOM_EXPIRATION_TIME - elapsed;
+
+    if (remaining <= 0) {
+      // 房间已过期，自动销毁
+      console.log('[StickyNotesRoom] Room has expired, auto-destroying...');
+      this.destroyRoom().catch(err => {
+        console.error('[StickyNotesRoom] Failed to auto-destroy expired room:', err);
+      });
+    } else {
+      // 通知剩余时间
+      if (this.onRoomExpiring) {
+        this.onRoomExpiring(remaining);
+      }
+    }
+  }
+
+  /**
+   * 销毁房间
+   * @param verifyPassword 用于二次验证的密码（加密房间必需）
+   */
+  async destroyRoom(verifyPassword?: string) {
     if (!this.yNotes || !this.yMeta || !this.ydoc) return;
+
+    // 检查是否是加密房间
+    const existingToken = this.yMeta.get('passwordVerificationToken');
+    const existingMethod = this.yMeta.get('encryptionMethod') as EncryptionMethod | undefined;
+
+    if (existingToken && existingMethod) {
+      // 这是加密房间，必须验证密码
+      if (!verifyPassword) {
+        throw new Error('这是加密房间，需要输入密码才能销毁');
+      }
+
+      // 验证密码
+      const isValid = await encryptionHelper.verifyPassword(
+        existingToken,
+        verifyPassword,
+        existingMethod
+      );
+
+      if (!isValid) {
+        throw new Error('密码错误，无法销毁房间');
+      }
+    }
 
     // 使用 Yjs transaction 确保原子操作
     this.ydoc.transact(() => {
@@ -237,6 +420,11 @@ export class StickyNotesRoom {
       notes.push(note);
     });
 
+    // 如果启用加密，解密所有便签内容
+    if (this.enableEncryption && this.password) {
+      return await this.decryptNotes(notes);
+    }
+
     return notes;
   }
 
@@ -252,6 +440,49 @@ export class StickyNotesRoom {
     });
 
     return users;
+  }
+
+  /**
+   * 解密便签列表
+   */
+  private async decryptNotes(notes: StickyNote[]): Promise<StickyNote[]> {
+    const decryptedNotes: StickyNote[] = [];
+
+    for (const note of notes) {
+      try {
+        // 只解密有内容的便签
+        if (note.content) {
+          // 检测内容是否已加密（简单检测：是否包含base64字符或|分隔符）
+          const looksEncrypted = /^[A-Za-z0-9+/=|]+$/.test(note.content.trim());
+
+          if (looksEncrypted) {
+            const decryptedContent = await encryptionHelper.decrypt(
+              note.content,
+              this.password,
+              this.encryptionMethod
+            );
+            decryptedNotes.push({
+              ...note,
+              content: decryptedContent,
+            });
+          } else {
+            // 看起来不是加密的，直接显示
+            decryptedNotes.push(note);
+          }
+        } else {
+          decryptedNotes.push(note);
+        }
+      } catch (error) {
+        console.error('[StickyNotesRoom] Failed to decrypt note:', note.id, error);
+        // 解密失败时，显示错误提示而不是加密文本
+        decryptedNotes.push({
+          ...note,
+          content: '⚠️ 解密失败（密码错误或数据损坏）',
+        });
+      }
+    }
+
+    return decryptedNotes;
   }
 
   /**
@@ -354,6 +585,8 @@ export class StickyNotesRoom {
       userName: this.userName,
       userColor: this.userColor,
       isEncrypted: this.enableEncryption,
+      encryptionMethod: this.encryptionMethod,
+      isExistingEncryptedRoom: !!(this.yMeta?.get('passwordVerificationToken')),
       peerCount: this.provider?.room?.webrtcConns?.size || 0,
     };
   }

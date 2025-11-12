@@ -10,9 +10,10 @@ interface StickyNoteCardProps {
   onUpdate: (noteId: string, updates: Partial<StickyNote>) => void;
   onDelete: (noteId: string) => void;
   isReadOnly?: boolean;
+  canvasScale?: number;
 }
 
-export function StickyNoteCard({ note, onUpdate, onDelete, isReadOnly = false }: StickyNoteCardProps) {
+export function StickyNoteCard({ note, onUpdate, onDelete, isReadOnly = false, canvasScale = 1 }: StickyNoteCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [content, setContent] = useState(note.content);
   const [isDragging, setIsDragging] = useState(false);
@@ -138,22 +139,24 @@ export function StickyNoteCard({ note, onUpdate, onDelete, isReadOnly = false }:
         if (!container) return;
 
         const containerRect = container.getBoundingClientRect();
-        const newX = clientX - containerRect.left - dragOffset.x;
-        const newY = clientY - containerRect.top - dragOffset.y;
 
-        // 边界检查
-        const maxX = containerRect.width - note.size.width;
-        const maxY = containerRect.height - note.size.height;
+        // 将屏幕坐标转换为逻辑坐标（考虑画布缩放）
+        const screenX = clientX - containerRect.left - dragOffset.x;
+        const screenY = clientY - containerRect.top - dragOffset.y;
+        const newX = screenX / canvasScale;
+        const newY = screenY / canvasScale;
 
+        // 不限制边界，允许便签移动到画布的任何位置
         onUpdate(note.id, {
           position: {
-            x: Math.max(0, Math.min(newX, maxX)),
-            y: Math.max(0, Math.min(newY, maxY)),
+            x: newX,
+            y: newY,
           },
         });
       } else if (isResizing) {
-        const deltaX = clientX - resizeStart.mouseX;
-        const deltaY = clientY - resizeStart.mouseY;
+        // 调整大小时也要考虑缩放
+        const deltaX = (clientX - resizeStart.mouseX) / canvasScale;
+        const deltaY = (clientY - resizeStart.mouseY) / canvasScale;
 
         const newWidth = Math.max(200, resizeStart.width + deltaX);
         const newHeight = Math.max(150, resizeStart.height + deltaY);
@@ -219,7 +222,7 @@ export function StickyNoteCard({ note, onUpdate, onDelete, isReadOnly = false }:
   return (
     <div
       ref={cardRef}
-      className={`absolute shadow-lg rounded-lg overflow-hidden touch-none ${
+      className={`sticky-note-card absolute shadow-lg rounded-lg overflow-hidden touch-none ${
         isDragging ? 'cursor-grabbing opacity-80 z-50' : 'cursor-grab'
       } ${isResizing ? 'select-none' : ''}`}
       style={{

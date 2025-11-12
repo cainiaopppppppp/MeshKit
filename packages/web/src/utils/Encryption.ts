@@ -1,97 +1,161 @@
 /**
  * 便签墙 - 端到端加密工具 (可选)
+ * 使用 crypto-js 实现，支持 HTTP 环境和多种加密算法
  */
 
+import CryptoJS from 'crypto-js';
+
+export type EncryptionMethod = 'AES-256-CBC' | 'AES-256-GCM' | 'TripleDES' | 'Rabbit' | 'RC4';
+
+export const ENCRYPTION_METHODS = [
+  { value: 'AES-256-CBC', label: 'AES-256-CBC (推荐)', description: '安全性高，速度快' },
+  { value: 'AES-256-GCM', label: 'AES-256-GCM (最安全)', description: '带认证的加密，最安全但稍慢' },
+  { value: 'TripleDES', label: 'TripleDES', description: '向后兼容，安全性中等' },
+  { value: 'Rabbit', label: 'Rabbit', description: '速度极快，安全性高' },
+  { value: 'RC4', label: 'RC4', description: '速度快，但安全性较低（不推荐）' },
+] as const;
+
+// 验证token，用于验证密码正确性
+const VERIFICATION_TOKEN = '__VERIFY_PASSWORD__';
+
 export class EncryptionHelper {
-  private encoder = new TextEncoder();
-  private decoder = new TextDecoder();
+  /**
+   * 检查加密 API 是否可用
+   * crypto-js 是纯 JavaScript 实现，在任何环境下都可用
+   */
+  isAvailable(): boolean {
+    return true;
+  }
 
   /**
-   * 从密码派生加密密钥
+   * 创建验证token
+   * 用于验证密码是否正确
    */
-  private async deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
-    const passwordKey = await crypto.subtle.importKey(
-      'raw',
-      this.encoder.encode(password),
-      'PBKDF2',
-      false,
-      ['deriveBits', 'deriveKey']
-    );
+  async createVerificationToken(password: string, method: EncryptionMethod = 'AES-256-CBC'): Promise<string> {
+    return await this.encrypt(VERIFICATION_TOKEN, password, method);
+  }
 
-    return await crypto.subtle.deriveKey(
-      {
-        name: 'PBKDF2',
-        salt: salt as BufferSource,
-        iterations: 100000,
-        hash: 'SHA-256',
-      },
-      passwordKey,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['encrypt', 'decrypt']
-    );
+  /**
+   * 验证密码是否正确
+   */
+  async verifyPassword(encryptedToken: string, password: string, method: EncryptionMethod = 'AES-256-CBC'): Promise<boolean> {
+    try {
+      const decrypted = await this.decrypt(encryptedToken, password, method);
+      return decrypted === VERIFICATION_TOKEN;
+    } catch {
+      return false;
+    }
   }
 
   /**
    * 加密文本
+   * @param text 要加密的文本
+   * @param password 密码
+   * @param method 加密方法
    */
-  async encrypt(text: string, password: string): Promise<string> {
+  async encrypt(text: string, password: string, method: EncryptionMethod = 'AES-256-CBC'): Promise<string> {
     try {
-      // 生成随机盐和 IV
-      const salt = crypto.getRandomValues(new Uint8Array(16));
-      const iv = crypto.getRandomValues(new Uint8Array(12));
+      let result: string;
 
-      // 派生密钥
-      const key = await this.deriveKey(password, salt);
+      switch (method) {
+        case 'AES-256-CBC':
+          result = CryptoJS.AES.encrypt(text, password, {
+            keySize: 256 / 32,
+            mode: CryptoJS.mode.CBC,
+            padding: CryptoJS.pad.Pkcs7,
+          }).toString();
+          break;
 
-      // 加密数据
-      const encrypted = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv },
-        key,
-        this.encoder.encode(text)
-      );
+        case 'AES-256-GCM':
+          // crypto-js 不直接支持 GCM，使用 CBC + HMAC 模拟认证加密
+          const encryptedText = CryptoJS.AES.encrypt(text, password, {
+            keySize: 256 / 32,
+            mode: CryptoJS.mode.CBC,
+            padding: CryptoJS.pad.Pkcs7,
+          }).toString();
+          const hmac = CryptoJS.HmacSHA256(encryptedText, password).toString();
+          // 格式: ciphertext|hmac
+          result = encryptedText + '|' + hmac;
+          break;
 
-      // 组合: salt(16) + iv(12) + encrypted
-      const combined = new Uint8Array(salt.length + iv.length + encrypted.byteLength);
-      combined.set(salt, 0);
-      combined.set(iv, salt.length);
-      combined.set(new Uint8Array(encrypted), salt.length + iv.length);
+        case 'TripleDES':
+          result = CryptoJS.TripleDES.encrypt(text, password).toString();
+          break;
 
-      // 转换为 Base64
-      return btoa(String.fromCharCode(...combined));
+        case 'Rabbit':
+          result = CryptoJS.Rabbit.encrypt(text, password).toString();
+          break;
+
+        case 'RC4':
+          result = CryptoJS.RC4.encrypt(text, password).toString();
+          break;
+
+        default:
+          throw new Error(`不支持的加密方法: ${method}`);
+      }
+
+      return result;
     } catch (error) {
       console.error('Encryption error:', error);
-      throw new Error('Failed to encrypt data');
+      throw new Error('加密失败：' + (error as Error).message);
     }
   }
 
   /**
    * 解密文本
+   * @param encryptedText 加密的文本
+   * @param password 密码
+   * @param method 加密方法
    */
-  async decrypt(encryptedText: string, password: string): Promise<string> {
+  async decrypt(encryptedText: string, password: string, method: EncryptionMethod = 'AES-256-CBC'): Promise<string> {
     try {
-      // 从 Base64 解码
-      const combined = Uint8Array.from(atob(encryptedText), c => c.charCodeAt(0));
+      let decrypted: CryptoJS.lib.WordArray;
 
-      // 提取 salt, iv 和加密数据
-      const salt = combined.slice(0, 16);
-      const iv = combined.slice(16, 28);
-      const encrypted = combined.slice(28);
+      switch (method) {
+        case 'AES-256-CBC':
+          decrypted = CryptoJS.AES.decrypt(encryptedText, password);
+          break;
 
-      // 派生密钥
-      const key = await this.deriveKey(password, salt);
+        case 'AES-256-GCM':
+          // 验证 HMAC 并解密
+          const parts = encryptedText.split('|');
+          if (parts.length !== 2) {
+            throw new Error('Invalid encrypted format');
+          }
+          const [ciphertext, receivedHmac] = parts;
+          const computedHmac = CryptoJS.HmacSHA256(ciphertext, password).toString();
+          if (computedHmac !== receivedHmac) {
+            throw new Error('HMAC verification failed - data may be tampered');
+          }
+          decrypted = CryptoJS.AES.decrypt(ciphertext, password);
+          break;
 
-      // 解密数据
-      const decrypted = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv },
-        key,
-        encrypted
-      );
+        case 'TripleDES':
+          decrypted = CryptoJS.TripleDES.decrypt(encryptedText, password);
+          break;
 
-      return this.decoder.decode(decrypted);
+        case 'Rabbit':
+          decrypted = CryptoJS.Rabbit.decrypt(encryptedText, password);
+          break;
+
+        case 'RC4':
+          decrypted = CryptoJS.RC4.decrypt(encryptedText, password);
+          break;
+
+        default:
+          throw new Error(`不支持的加密方法: ${method}`);
+      }
+
+      const plaintext = decrypted.toString(CryptoJS.enc.Utf8);
+
+      if (!plaintext) {
+        throw new Error('解密失败：密码错误');
+      }
+
+      return plaintext;
     } catch (error) {
       console.error('Decryption error:', error);
-      throw new Error('Failed to decrypt data - wrong password?');
+      throw new Error('解密失败：密码错误或数据损坏');
     }
   }
 

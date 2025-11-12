@@ -6,6 +6,7 @@ import { useState, useEffect, useRef } from 'react';
 import { StickyNoteCard } from '../components/StickyNoteCard';
 import { StickyNotesRoom } from '../services/StickyNotesRoom';
 import type { StickyNote, UserInfo, RoomConfig } from '../types/stickyNote';
+import { ENCRYPTION_METHODS, type EncryptionMethod } from '../utils/Encryption';
 
 export function StickyNotesPage() {
   const [roomId, setRoomId] = useState('');
@@ -25,6 +26,17 @@ export function StickyNotesPage() {
   const [isEditingName, setIsEditingName] = useState(false);
   const [tempUserName, setTempUserName] = useState('');
   const [customColor, setCustomColor] = useState('#FFE6E6');
+  const [encryptionMethod, setEncryptionMethod] = useState<EncryptionMethod>('AES-256-CBC');
+  const [roomExpiresIn, setRoomExpiresIn] = useState<number | null>(null);
+
+  // 画布拖动状态
+  const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
+  const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
+  const dragStartPos = useRef({ x: 0, y: 0 });
+  const dragStartOffset = useRef({ x: 0, y: 0 });
+
+  // 画布缩放状态
+  const [canvasScale, setCanvasScale] = useState(1);
 
   const roomRef = useRef<StickyNotesRoom | null>(null);
   const wallRef = useRef<HTMLDivElement>(null);
@@ -62,6 +74,7 @@ export function StickyNotesPage() {
       roomId: roomId.trim(),
       password: password.trim(),
       enableEncryption,
+      encryptionMethod,
     };
 
     const room = new StickyNotesRoom();
@@ -82,11 +95,20 @@ export function StickyNotesPage() {
         alert('房间已被销毁');
         handleLeaveRoom();
       },
+      onRoomExpiring: (remainingTime) => {
+        setRoomExpiresIn(remainingTime);
+      },
     });
 
     setIsInRoom(true);
     const info = room.getRoomInfo();
     setRoomInfo(info);
+
+    // 如果加入的是已存在的加密房间，更新本地的加密算法设置
+    if (info.isExistingEncryptedRoom && info.encryptionMethod) {
+      setEncryptionMethod(info.encryptionMethod);
+      console.log('[StickyNotesPage] Joined existing encrypted room, using algorithm:', info.encryptionMethod);
+    }
 
     // 加载初始数据
     const initialNotes = await room.getAllNotes();
@@ -110,14 +132,30 @@ export function StickyNotesPage() {
   };
 
   // 销毁房间
-  const handleDestroyRoom = () => {
+  const handleDestroyRoom = async () => {
     if (!roomRef.current) return;
 
-    if (confirm('确定要销毁房间吗？\n\n销毁后：\n- 所有便签将被删除\n- 所有成员将被移除\n- 此操作不可撤销')) {
-      roomRef.current.destroyRoom();
+    if (!confirm('确定要销毁房间吗？\n\n销毁后：\n- 所有便签将被删除\n- 所有成员将被移除\n- 此操作不可撤销')) {
+      return;
+    }
+
+    try {
+      // 如果是加密房间，需要输入密码验证
+      let verifyPassword: string | null = null;
+      if (roomInfo?.isEncrypted) {
+        verifyPassword = prompt('这是加密房间，请输入密码以验证身份：');
+        if (verifyPassword === null) {
+          // 用户取消
+          return;
+        }
+      }
+
+      await roomRef.current.destroyRoom(verifyPassword || undefined);
       setTimeout(() => {
         handleLeaveRoom();
       }, 500); // 延迟离开，确保销毁信号已发送
+    } catch (error) {
+      alert((error as Error).message || '销毁房间失败');
     }
   };
 
@@ -181,6 +219,52 @@ export function StickyNotesPage() {
   // 取消编辑昵称
   const handleCancelEditName = () => {
     setIsEditingName(false);
+  };
+
+  // 画布拖动处理（用于移动端查看屏幕外的便签）
+  const handleCanvasPointerDown = (e: React.PointerEvent) => {
+    // 如果点击的是便签卡片，不触发画布拖动
+    const target = e.target as HTMLElement;
+    if (target.closest('.sticky-note-card')) {
+      return;
+    }
+
+    setIsDraggingCanvas(true);
+    dragStartPos.current = { x: e.clientX, y: e.clientY };
+    dragStartOffset.current = { ...canvasOffset };
+
+    // 防止文本选择
+    e.preventDefault();
+  };
+
+  const handleCanvasPointerMove = (e: React.PointerEvent) => {
+    if (!isDraggingCanvas) return;
+
+    const deltaX = e.clientX - dragStartPos.current.x;
+    const deltaY = e.clientY - dragStartPos.current.y;
+
+    setCanvasOffset({
+      x: dragStartOffset.current.x + deltaX,
+      y: dragStartOffset.current.y + deltaY,
+    });
+  };
+
+  const handleCanvasPointerUp = () => {
+    setIsDraggingCanvas(false);
+  };
+
+  // 格式化剩余时间
+  const formatRemainingTime = (ms: number): string => {
+    const hours = Math.floor(ms / (1000 * 60 * 60));
+    const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
+
+    if (hours > 0) {
+      return `${hours}小时${minutes}分钟`;
+    } else if (minutes > 0) {
+      return `${minutes}分钟`;
+    } else {
+      return '即将过期';
+    }
   };
 
   // 复制房间码
@@ -277,41 +361,69 @@ export function StickyNotesPage() {
               </div>
             </div>
 
-            {/* 加密选项 - 暂时隐藏 */}
-            {/* TODO: 待 crypto API 支持完善后启用 */}
-            {false && (
-              <>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="encryption"
-                    checked={enableEncryption}
-                    onChange={(e) => setEnableEncryption(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 rounded"
-                  />
-                  <label htmlFor="encryption" className="text-sm text-gray-700">
-                    启用端到端加密
-                  </label>
-                </div>
+            {/* 加密选项 */}
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="encryption"
+                checked={enableEncryption}
+                onChange={(e) => setEnableEncryption(e.target.checked)}
+                className="w-4 h-4 text-blue-600 rounded"
+              />
+              <label htmlFor="encryption" className="text-sm text-gray-700">
+                启用端到端加密
+              </label>
+            </div>
 
-                {/* 密码（加密时） */}
-                {enableEncryption && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      加密密码
-                    </label>
-                    <input
-                      type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="设置加密密码"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      所有成员需要使用相同的密码才能查看内容
+            {/* 密码和加密算法（加密时） */}
+            {enableEncryption && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    加密算法
+                  </label>
+                  <div className="relative">
+                    <select
+                      value={encryptionMethod}
+                      onChange={(e) => setEncryptionMethod(e.target.value as EncryptionMethod)}
+                      className="w-full px-4 py-3 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white text-gray-900 font-medium appearance-none cursor-pointer transition-all hover:border-gray-400 text-sm sm:text-base"
+                      style={{ maxWidth: '100%' }}
+                    >
+                      {ENCRYPTION_METHODS.map((method) => (
+                        <option key={method.value} value={method.value} className="py-2 text-sm">
+                          {method.label}
+                        </option>
+                      ))}
+                    </select>
+                    {/* 自定义下拉箭头 */}
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-500">
+                      <svg className="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                  </div>
+                  <div className="mt-2 p-3 bg-blue-50 rounded-lg border border-blue-100">
+                    <p className="text-xs text-blue-800 font-medium break-words">
+                      {ENCRYPTION_METHODS.find(m => m.value === encryptionMethod)?.description}
                     </p>
                   </div>
-                )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    加密密码
+                  </label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="设置加密密码"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                  />
+                  <p className="text-xs text-gray-500 mt-2">
+                    💡 创建新房间时选择加密算法；加入已有房间时自动使用房间的算法
+                  </p>
+                </div>
               </>
             )}
 
@@ -329,6 +441,7 @@ export function StickyNotesPage() {
               <ul className="text-xs text-gray-600 space-y-1">
                 <li>✅ 完全 P2P，局域网运行</li>
                 <li>✅ 实时多人协作</li>
+                <li>✅ 端到端加密（可选）</li>
                 <li>✅ 离线可用，在线自动同步</li>
                 <li>✅ 数据本地存储</li>
                 <li>✅ 支持拖拽、调整大小</li>
@@ -342,9 +455,9 @@ export function StickyNotesPage() {
 
   // 便签墙页面
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col">
+    <div className="h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col overflow-hidden">
       {/* 顶部工具栏 */}
-      <div className="bg-white border-b border-gray-200 px-3 sm:px-6 py-3 sm:py-4">
+      <div className="bg-white border-b border-gray-200 px-3 sm:px-6 py-3 sm:py-4 flex-shrink-0">
         <div className="max-w-7xl mx-auto">
           {/* 移动端：垂直布局 */}
           <div className="flex flex-col sm:hidden gap-3">
@@ -365,6 +478,14 @@ export function StickyNotesPage() {
                 <span className="text-sm font-mono font-medium text-gray-900">
                   {roomInfo?.roomId}
                 </span>
+                {roomInfo?.isEncrypted && (
+                  <span
+                    className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-full"
+                    title={`端到端加密已启用 (${roomInfo?.encryptionMethod || '未知算法'})`}
+                  >
+                    🔒 {roomInfo?.encryptionMethod || '加密'}
+                  </span>
+                )}
                 <button
                   onClick={copyRoomId}
                   className="text-xs px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 touch-manipulation min-h-[28px]"
@@ -542,6 +663,14 @@ export function StickyNotesPage() {
                 <span className="text-sm font-mono font-medium text-gray-900">
                   {roomInfo?.roomId}
                 </span>
+                {roomInfo?.isEncrypted && (
+                  <span
+                    className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-full"
+                    title={`端到端加密已启用 (${roomInfo?.encryptionMethod || '未知算法'})`}
+                  >
+                    🔒 {roomInfo?.encryptionMethod || '加密'}
+                  </span>
+                )}
                 <button
                   onClick={copyRoomId}
                   className="text-xs px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 touch-manipulation min-h-[28px]"
@@ -703,33 +832,98 @@ export function StickyNotesPage() {
       {/* 便签墙区域 */}
       <div
         ref={wallRef}
-        className="flex-1 relative overflow-hidden"
+        className="flex-1 relative overflow-hidden select-none"
+        style={{
+          cursor: isDraggingCanvas ? 'grabbing' : 'grab',
+        }}
         onClick={() => setShowColorPicker(false)}
+        onPointerDown={handleCanvasPointerDown}
+        onPointerMove={handleCanvasPointerMove}
+        onPointerUp={handleCanvasPointerUp}
+        onPointerCancel={handleCanvasPointerUp}
       >
-        {notes.length === 0 ? (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="text-center">
-              <p className="text-gray-400 text-lg mb-2">还没有便签</p>
-              <p className="text-gray-300 text-sm">点击右上角"添加便签"开始创建</p>
+        <div
+          style={{
+            transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px) scale(${canvasScale})`,
+            transformOrigin: '0 0',
+            transition: isDraggingCanvas ? 'none' : 'transform 0.1s ease-out',
+            width: '100%',
+            height: '100%',
+            position: 'relative',
+          }}
+        >
+          {notes.length === 0 ? (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="text-center">
+                <p className="text-gray-400 text-lg mb-2">还没有便签</p>
+                <p className="text-gray-300 text-sm">点击右上角"添加便签"开始创建</p>
+              </div>
             </div>
-          </div>
-        ) : (
-          notes.map((note) => (
-            <StickyNoteCard
-              key={note.id}
-              note={note}
-              onUpdate={handleUpdateNote}
-              onDelete={handleDeleteNote}
-            />
-          ))
-        )}
+          ) : (
+            notes.map((note) => (
+              <StickyNoteCard
+                key={note.id}
+                note={note}
+                onUpdate={handleUpdateNote}
+                onDelete={handleDeleteNote}
+                canvasScale={canvasScale}
+              />
+            ))
+          )}
+        </div>
+
+        {/* 缩放控制器 - 浮动在画布右下角 */}
+        <div className="absolute bottom-4 right-4 bg-white rounded-lg shadow-lg border border-gray-200 p-3 flex items-center gap-3 z-10">
+          <span className="text-sm text-gray-600 font-medium">缩放</span>
+          <button
+            onClick={() => setCanvasScale(Math.max(0.5, canvasScale - 0.1))}
+            className="w-8 h-8 flex items-center justify-center bg-gray-100 hover:bg-gray-200 rounded text-gray-700 font-bold transition-colors"
+            title="缩小"
+          >
+            -
+          </button>
+          <input
+            type="range"
+            min="50"
+            max="300"
+            step="10"
+            value={canvasScale * 100}
+            onChange={(e) => setCanvasScale(parseInt(e.target.value) / 100)}
+            className="w-32 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+            style={{
+              background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((canvasScale - 0.5) / 2.5) * 100}%, #e5e7eb ${((canvasScale - 0.5) / 2.5) * 100}%, #e5e7eb 100%)`
+            }}
+          />
+          <button
+            onClick={() => setCanvasScale(Math.min(3, canvasScale + 0.1))}
+            className="w-8 h-8 flex items-center justify-center bg-gray-100 hover:bg-gray-200 rounded text-gray-700 font-bold transition-colors"
+            title="放大"
+          >
+            +
+          </button>
+          <span className="text-sm text-gray-700 font-mono min-w-[3rem] text-center">
+            {Math.round(canvasScale * 100)}%
+          </span>
+          <button
+            onClick={() => setCanvasScale(1)}
+            className="px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white text-xs rounded transition-colors"
+            title="重置缩放"
+          >
+            重置
+          </button>
+        </div>
       </div>
 
       {/* 底部提示 */}
-      <div className="bg-white border-t border-gray-200 px-3 sm:px-6 py-2 sm:py-3">
+      <div className="bg-white border-t border-gray-200 px-3 sm:px-6 py-2 sm:py-3 flex-shrink-0">
         <div className="flex flex-col sm:flex-row items-center justify-between text-xs text-gray-500 gap-1">
           <div className="truncate">
             房间: {roomInfo?.roomId}
+            {roomExpiresIn !== null && (
+              <span className="ml-2 text-orange-600">
+                · ⏱️ {formatRemainingTime(roomExpiresIn)}后过期
+              </span>
+            )}
           </div>
           <div className="whitespace-nowrap">
             {notes.length} 个便签 · {users.length} 人在线

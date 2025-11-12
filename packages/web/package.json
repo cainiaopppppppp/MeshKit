@@ -12,6 +12,7 @@
   "dependencies": {
     "@meshkit/core": "workspace:*",
     "@types/react-router-dom": "^5.3.3",
+    "crypto-js": "^4.2.0",
     "idb": "^8.0.3",
     "peerjs": "^1.5.2",
     "react": "^18.2.0",
@@ -22,6 +23,7 @@
     "zustand": "^4.4.7"
   },
   "devDependencies": {
+    "@types/crypto-js": "^4.2.2",
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",
     "@vitejs/plugin-react": "^4.2.1",
