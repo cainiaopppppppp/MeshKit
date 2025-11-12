@@ -801,7 +801,7 @@ export function StickyNotesPage() {
                           }}
                           className="flex-1 px-3 py-2 bg-blue-500 text-white text-sm rounded-lg hover:bg-blue-600 transition-colors touch-manipulation"
                         >
-                          使用此颜色
+                          使用
                         </button>
                       </div>
                     </div>
