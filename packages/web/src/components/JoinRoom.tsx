@@ -8,6 +8,10 @@ export function JoinRoom() {
   const { joinRoom, isJoining, error } = useRoom();
   const [code, setCode] = useState('');
 
+  // 密码保护
+  const [enablePassword, setEnablePassword] = useState(false);
+  const [password, setPassword] = useState('');
+
   const handleCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value.replace(/\D/g, '').slice(0, 6); // 只允许数字，最多6位
     setCode(value);
@@ -19,7 +23,8 @@ export function JoinRoom() {
       return;
     }
 
-    await joinRoom(code);
+    // 传递密码（如果勾选了密码保护）
+    await joinRoom(code, enablePassword ? password : undefined);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -56,6 +61,37 @@ export function JoinRoom() {
             <span className="text-sm text-green-600 font-semibold">✓ 取件码已输入完整</span>
           )}
         </div>
+      </div>
+
+      {/* 密码保护（可选） */}
+      <div className="mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <input
+            type="checkbox"
+            id="enable-password"
+            checked={enablePassword}
+            onChange={(e) => setEnablePassword(e.target.checked)}
+            className="w-4 h-4 text-green-600 rounded focus:ring-2 focus:ring-green-500"
+          />
+          <label htmlFor="enable-password" className="text-sm text-gray-700 font-medium cursor-pointer">
+            🔒 房间有密码保护
+          </label>
+        </div>
+
+        {enablePassword && (
+          <div>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="输入房间密码"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all"
+            />
+            <p className="text-xs text-gray-500 mt-2">
+              如果房间设置了密码，请输入正确密码
+            </p>
+          </div>
+        )}
       </div>
 
       {error && (
