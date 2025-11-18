@@ -25,38 +25,32 @@ export function RoomModeSelector() {
   };
 
   return (
-    <div className="mode-selector">
-      <div className="mode-tabs">
-        <button
-          className={`mode-tab ${transferMode === 'p2p' ? 'active' : ''}`}
-          onClick={() => handleModeChange('p2p')}
-          disabled={isTransferring}
-        >
-          <span className="mode-icon">🔗</span>
-          <span className="mode-label">点对点传输</span>
-        </button>
+    <div className="flex gap-2 bg-gray-50 p-1 rounded-lg">
+      <button
+        className={`flex-1 py-2.5 rounded-lg font-medium transition-all text-sm flex items-center justify-center gap-2 ${
+          transferMode === 'p2p'
+            ? 'bg-white text-blue-600 shadow-sm'
+            : 'text-gray-600 hover:bg-white/50'
+        }`}
+        onClick={() => handleModeChange('p2p')}
+        disabled={isTransferring}
+      >
+        <span>🔗</span>
+        <span>点对点传输</span>
+      </button>
 
-        <button
-          className={`mode-tab ${transferMode === 'room' ? 'active' : ''}`}
-          onClick={() => handleModeChange('room')}
-          disabled={isTransferring}
-        >
-          <span className="mode-icon">🎫</span>
-          <span className="mode-label">取件码模式</span>
-        </button>
-      </div>
-
-      <div className="mode-description">
-        {transferMode === 'p2p' ? (
-          <p className="description-text">
-            选择一个设备，直接发送文件
-          </p>
-        ) : (
-          <p className="description-text">
-            通过取件码发送或接收文件，支持多人同时接收
-          </p>
-        )}
-      </div>
+      <button
+        className={`flex-1 py-2.5 rounded-lg font-medium transition-all text-sm flex items-center justify-center gap-2 ${
+          transferMode === 'room'
+            ? 'bg-white text-blue-600 shadow-sm'
+            : 'text-gray-600 hover:bg-white/50'
+        }`}
+        onClick={() => handleModeChange('room')}
+        disabled={isTransferring}
+      >
+        <span>🎫</span>
+        <span>取件码模式</span>
+      </button>
     </div>
   );
 }

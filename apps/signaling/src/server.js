@@ -56,6 +56,9 @@ const devices = new Map();
 // 存储所有房间
 const rooms = new Map();
 
+// y-webrtc 相关：存储 topic 订阅关系
+const topics = new Map(); // topic -> Set<ws>
+
 /**
  * 生成6位房间号
  */
@@ -84,11 +87,12 @@ function createRoom(hostId, hostName, roomData) {
     fileInfo: roomData.fileInfo,
     fileList: roomData.fileList,
     isMultiFile: roomData.isMultiFile,
-    status: 'waiting'
+    status: 'waiting',
+    password: roomData.password || null  // 存储密码（如果有）
   };
 
   rooms.set(roomId, room);
-  console.log(`🏠 房间创建: ${roomId} by ${hostName}`, roomData.isMultiFile ? `(多文件模式, ${roomData.fileList?.length || 0} 个文件)` : '(单文件模式)');
+  console.log(`🏠 房间创建: ${roomId} by ${hostName}${roomData.password ? ' 🔒 (有密码保护)' : ''}`, roomData.isMultiFile ? `(多文件模式, ${roomData.fileList?.length || 0} 个文件)` : '(单文件模式)');
 
   return room;
 }
@@ -96,11 +100,41 @@ function createRoom(hostId, hostName, roomData) {
 /**
  * 加入房间
  */
-function joinRoom(roomId, deviceId, deviceName) {
+function joinRoom(roomId, deviceId, deviceName, password) {
   const room = rooms.get(roomId);
 
   if (!room) {
     throw new Error('房间不存在');
+  }
+
+  console.log(`[DEBUG] 加入房间请求 - 房间: ${roomId}, 用户: ${deviceName}, 提供的密码: ${password === undefined ? 'undefined' : password === null ? 'null' : `"${password}"`}`);
+  console.log(`[DEBUG] 房间密码状态 - 房间密码: ${room.password === undefined ? 'undefined' : room.password === null ? 'null' : `"${room.password}"`}`);
+
+  // 🔒 严格验证密码（如果房间有密码保护）
+  if (room.password !== null && room.password !== undefined && room.password !== '') {
+    console.log(`[DEBUG] 房间需要密码验证`);
+
+    // 必须提供密码
+    if (password === undefined || password === null) {
+      console.log(`❌ ${deviceName} 未提供密码，无法加入房间: ${roomId}`);
+      throw new Error('此房间需要密码');
+    }
+
+    // 密码不能为空
+    if (typeof password !== 'string' || password.trim() === '') {
+      console.log(`❌ ${deviceName} 密码为空，无法加入房间: ${roomId}`);
+      throw new Error('密码不能为空');
+    }
+
+    // 密码必须匹配
+    if (password !== room.password) {
+      console.log(`❌ ${deviceName} 密码错误，无法加入房间: ${roomId} (提供: "${password}", 正确: "${room.password}")`);
+      throw new Error('密码错误');
+    }
+
+    console.log(`✅ ${deviceName} 密码验证成功`);
+  } else {
+    console.log(`[DEBUG] 房间无密码保护，直接允许加入`);
   }
 
   if (room.status !== 'waiting') {
@@ -123,7 +157,7 @@ function joinRoom(roomId, deviceId, deviceName) {
   };
 
   room.members.push(member);
-  console.log(`👤 ${deviceName} 加入房间 ${roomId}`);
+  console.log(`👤 ${deviceName} 加入房间 ${roomId}${room.password ? ' (密码验证通过)' : ''}`);
 
   return room;
 }
@@ -156,9 +190,15 @@ function leaveRoom(roomId, deviceId) {
  * 广播房间更新到房间内所有成员
  */
 function broadcastRoomUpdate(room) {
+  // 移除密码字段，只广播必要信息
+  const roomInfo = { ...room };
+  const hasPassword = !!room.password;
+  delete roomInfo.password;
+  roomInfo.hasPassword = hasPassword;
+
   const message = JSON.stringify({
     type: 'room-update',
-    room: room
+    room: roomInfo
   });
 
   room.members.forEach(member => {
@@ -179,7 +219,56 @@ wss.on('connection', (ws, req) => {
     try {
       const data = JSON.parse(message);
 
+      // y-webrtc 协议支持
       switch (data.type) {
+        case 'subscribe':
+          // y-webrtc: 订阅 topics
+          if (data.topics && Array.isArray(data.topics)) {
+            data.topics.forEach(topic => {
+              if (!topics.has(topic)) {
+                topics.set(topic, new Set());
+              }
+              topics.get(topic).add(ws);
+              console.log(`📌 [y-webrtc] 订阅 topic: ${topic}`);
+            });
+          }
+          break;
+
+        case 'unsubscribe':
+          // y-webrtc: 取消订阅 topics
+          if (data.topics && Array.isArray(data.topics)) {
+            data.topics.forEach(topic => {
+              if (topics.has(topic)) {
+                topics.get(topic).delete(ws);
+                if (topics.get(topic).size === 0) {
+                  topics.delete(topic);
+                }
+                console.log(`📍 [y-webrtc] 取消订阅 topic: ${topic}`);
+              }
+            });
+          }
+          break;
+
+        case 'publish':
+          // y-webrtc: 发布消息到 topic
+          if (data.topic && topics.has(data.topic)) {
+            const subscribers = topics.get(data.topic);
+            const messageToSend = JSON.stringify(data);
+
+            subscribers.forEach(subscriber => {
+              // 不发送给自己
+              if (subscriber !== ws && subscriber.readyState === WebSocket.OPEN) {
+                subscriber.send(messageToSend);
+              }
+            });
+          }
+          break;
+
+        case 'ping':
+          // y-webrtc: 心跳
+          ws.send(JSON.stringify({ type: 'pong' }));
+          break;
+
         case 'register':
           deviceId = data.deviceId;
           devices.set(deviceId, {
@@ -219,9 +308,14 @@ wss.on('connection', (ws, req) => {
           // 创建房间
           try {
             const room = createRoom(deviceId, data.deviceName, data.data);
+            // 移除密码字段，只广播必要信息
+            const roomInfo = { ...room };
+            delete roomInfo.password;
+            roomInfo.hasPassword = !!room.password;
+
             ws.send(JSON.stringify({
               type: 'room-update',
-              room: room
+              room: roomInfo
             }));
           } catch (error) {
             ws.send(JSON.stringify({
@@ -234,13 +328,18 @@ wss.on('connection', (ws, req) => {
         case 'join-room':
           // 加入房间
           try {
-            const room = joinRoom(data.roomId, deviceId, data.deviceName);
+            const room = joinRoom(data.roomId, deviceId, data.deviceName, data.password);
+            // 移除密码字段，只广播必要信息
+            const roomInfo = { ...room };
+            delete roomInfo.password;
+            roomInfo.hasPassword = !!room.password;
+
             // 通知加入者
             ws.send(JSON.stringify({
               type: 'room-update',
-              room: room
+              room: roomInfo
             }));
-            // 广播房间更新给所有成员
+            // 广播房间更新给所有成员（传递原始room对象，函数内部会处理密码）
             broadcastRoomUpdate(room);
           } catch (error) {
             ws.send(JSON.stringify({
@@ -399,6 +498,16 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
+    // 清理 y-webrtc 订阅
+    topics.forEach((subscribers, topic) => {
+      if (subscribers.has(ws)) {
+        subscribers.delete(ws);
+        if (subscribers.size === 0) {
+          topics.delete(topic);
+        }
+      }
+    });
+
     if (deviceId) {
       console.log(`👋 设备断开: ${deviceId}`);
       devices.delete(deviceId);

@@ -61,6 +61,7 @@ export interface Room {
   fileList?: FileMetadata[]; // 待传输的文件列表（多文件模式）
   isMultiFile?: boolean; // 是否为多文件模式
   status: 'waiting' | 'transferring' | 'completed';
+  hasPassword?: boolean; // 是否有密码保护（服务器告知客户端，但不传输真实密码）
 }
 
 export interface TransferProgress {
@@ -122,6 +123,7 @@ export interface SignalingMessage {
   error?: string;
   status?: 'waiting' | 'receiving' | 'completed' | 'failed';
   progress?: number;
+  password?: string; // 房间密码（仅用于创建/加入房间时传输，永不存储在 Room 对象中）
   // 文件相关字段
   fileList?: FileMetadata[];
   fileIndex?: number;
@@ -203,4 +205,7 @@ export interface EventMap {
   'room:member-progress': { deviceId: string; progress: number };
   'room:error': { error: string };
   'room:file-request': { deviceId: string; fileIndex: number };
+
+  // Chat events (for encrypted chat module)
+  'chat:message:deleted': { contactId: string; messageId: string };
 }

@@ -24,8 +24,9 @@ export function useRoom() {
 
   /**
    * 创建房间（支持单文件和多文件队列）
+   * @param password 可选的房间密码
    */
-  const createRoom = useCallback(async (file: File): Promise<Room | null> => {
+  const createRoom = useCallback(async (file: File, password?: string): Promise<Room | null> => {
     setIsCreating(true);
     setError(null);
 
@@ -57,8 +58,8 @@ export function useRoom() {
         };
       }
 
-      // 创建房间（传递文件列表）
-      const room = await roomManager.createRoom(fileInfo, fileList);
+      // 创建房间（传递文件列表和密码）
+      const room = await roomManager.createRoom(fileInfo, fileList, password);
       setCurrentRoom(room);
 
       console.log('[useRoom] Room created:', room);
@@ -75,13 +76,14 @@ export function useRoom() {
 
   /**
    * 加入房间
+   * @param password 可选的房间密码
    */
-  const joinRoom = useCallback(async (roomId: string): Promise<Room | null> => {
+  const joinRoom = useCallback(async (roomId: string, password?: string): Promise<Room | null> => {
     setIsJoining(true);
     setError(null);
 
     try {
-      const room = await roomManager.joinRoom(roomId);
+      const room = await roomManager.joinRoom(roomId, password);
       setCurrentRoom(room);
 
       console.log('[useRoom] Joined room:', room);
