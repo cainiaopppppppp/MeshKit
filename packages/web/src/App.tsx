@@ -73,7 +73,10 @@ function App() {
         <Routes>
           <Route path="/" element={<FileTransferPage />} />
           <Route path="/sticky-notes" element={<StickyNotesPage />} />
+<<<<<<< meshchat_zsl
           <Route path="/encrypted-chat" element={<EncryptedChatPage />} />
+=======
+>>>>>>> main
         </Routes>
       </div>
     </BrowserRouter>
