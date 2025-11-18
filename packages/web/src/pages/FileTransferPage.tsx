@@ -333,23 +333,14 @@ export function FileTransferPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4 md:p-8">
-      <div className="max-w-2xl mx-auto bg-white rounded-lg shadow-lg p-6 md:p-8">
-        {/* Header */}
-        <div className="text-center mb-6">
-          <h1 className="text-2xl font-bold text-gray-900 mb-1">MeshDrop</h1>
-          <p className="text-gray-500 text-sm">文件快传</p>
-        </div>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 p-4 md:p-8">
+      <div className="max-w-xl mx-auto bg-white rounded-2xl shadow-xl p-6 md:p-8">
 
         {/* 连接状态 */}
-        <div className={`text-center py-2 rounded-lg mb-6 text-sm ${
-          isConnected ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+        <div className={`text-center py-2.5 rounded-lg mb-6 text-sm font-medium ${
+          isConnected ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
         }`}>
-          {isConnected ? (
-            <span className="font-medium">已连接</span>
-          ) : (
-            <span className="font-medium">未连接 - 正在重连...</span>
-          )}
+          {isConnected ? '● 已连接' : '○ 未连接'}
         </div>
 
         {/* 设备名称 */}
@@ -358,12 +349,12 @@ export function FileTransferPage() {
             type="text"
             value={myDeviceName || ''}
             readOnly
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
+            className="w-full px-4 py-3 border border-gray-200 rounded-lg bg-gray-50 text-sm focus:outline-none"
             placeholder="设备名称"
           />
         </div>
 
-        {/* 传输模式选择器（顶层） */}
+        {/* 传输模式选择器 */}
         <div className="mb-6">
           <RoomModeSelector />
         </div>
@@ -645,8 +636,8 @@ export function FileTransferPage() {
         )}
 
         {/* Footer */}
-        <div className="mt-8 pt-6 border-t border-gray-200 text-center text-xs text-gray-400">
-          <p>MeshKit - 局域网文件传输</p>
+        <div className="mt-8 pt-6 border-t border-gray-200 text-center">
+          <p className="text-xs text-gray-400">MeshKit · P2P 协作工具套件</p>
         </div>
       </div>
     </div>

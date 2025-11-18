@@ -41,6 +41,12 @@ export function StickyNotesPage() {
   const roomRef = useRef<StickyNotesRoom | null>(null);
   const wallRef = useRef<HTMLDivElement>(null);
 
+  // 生成随机用户名
+  const generateRandomUserName = () => {
+    const randomName = `用户${Math.random().toString(36).substring(2, 6)}`;
+    setUserName(randomName);
+  };
+
   // 颜色选项
   const colors = [
     '#FFE6E6', // 粉红
@@ -325,62 +331,54 @@ export function StickyNotesPage() {
     // 房间加入页面
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 p-4 md:p-8">
-        <div className="max-w-md mx-auto bg-white rounded-2xl shadow-xl p-6 md:p-8">
-          <div className="text-center mb-6">
-            <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">分布式便签墙</h1>
-            <p className="text-gray-500 text-sm">无需服务器，实时协作</p>
-          </div>
+        <div className="max-w-xl mx-auto bg-white rounded-2xl shadow-xl p-6 md:p-8">
+          {/* Header - 移除标题，导航栏已有 */}
 
           <div className="space-y-4">
             {/* 昵称 */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                昵称
-              </label>
+            <div className="flex gap-2">
               <input
                 type="text"
                 value={userName}
                 onChange={(e) => setUserName(e.target.value)}
-                placeholder="输入昵称（留空则随机生成）"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="昵称"
+                className="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
               />
-              <p className="text-xs text-gray-500 mt-1">
-                留空将自动生成随机昵称，也可以输入"匿名"
-              </p>
+              <button
+                onClick={generateRandomUserName}
+                className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-all font-medium"
+              >
+                随机
+              </button>
             </div>
 
             {/* 房间码 */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                房间码
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={roomId}
-                  onChange={(e) => setRoomId(e.target.value)}
-                  placeholder="输入或生成房间码"
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <button
-                  onClick={generateRoomId}
-                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
-                >
-                  生成
-                </button>
-              </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={roomId}
+                onChange={(e) => setRoomId(e.target.value)}
+                placeholder="房间码"
+                className="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+              />
+              <button
+                onClick={generateRoomId}
+                className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-all font-medium"
+              >
+                生成
+              </button>
             </div>
 
             {/* 加密选项 */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3 px-1">
               <input
                 type="checkbox"
                 id="encryption"
                 checked={enableEncryption}
                 onChange={(e) => setEnableEncryption(e.target.checked)}
-                className="w-4 h-4 text-blue-600 rounded"
+                className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-2 focus:ring-blue-500"
               />
-              <label htmlFor="encryption" className="text-sm text-gray-700">
+              <label htmlFor="encryption" className="text-sm text-gray-700 cursor-pointer">
                 启用端到端加密
               </label>
             </div>
@@ -388,51 +386,33 @@ export function StickyNotesPage() {
             {/* 密码和加密算法（加密时） */}
             {enableEncryption && (
               <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    加密算法
-                  </label>
-                  <div className="relative">
-                    <select
-                      value={encryptionMethod}
-                      onChange={(e) => setEncryptionMethod(e.target.value as EncryptionMethod)}
-                      className="w-full px-4 py-3 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white text-gray-900 font-medium appearance-none cursor-pointer transition-all hover:border-gray-400 text-sm sm:text-base"
-                      style={{ maxWidth: '100%' }}
-                    >
-                      {ENCRYPTION_METHODS.map((method) => (
-                        <option key={method.value} value={method.value} className="py-2 text-sm">
-                          {method.label}
-                        </option>
-                      ))}
-                    </select>
-                    {/* 自定义下拉箭头 */}
-                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-500">
-                      <svg className="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-                      </svg>
-                    </div>
-                  </div>
-                  <div className="mt-2 p-3 bg-blue-50 rounded-lg border border-blue-100">
-                    <p className="text-xs text-blue-800 font-medium break-words">
-                      {ENCRYPTION_METHODS.find(m => m.value === encryptionMethod)?.description}
-                    </p>
+                <div className="relative">
+                  <select
+                    value={encryptionMethod}
+                    onChange={(e) => setEncryptionMethod(e.target.value as EncryptionMethod)}
+                    className="w-full px-4 py-3 pr-10 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white text-gray-900 appearance-none cursor-pointer transition-all"
+                  >
+                    {ENCRYPTION_METHODS.map((method) => (
+                      <option key={method.value} value={method.value}>
+                        {method.label}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-400">
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    加密密码
-                  </label>
                   <input
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="设置加密密码"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                    placeholder="加密密码"
+                    className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                   />
-                  <p className="text-xs text-gray-500 mt-2">
-                    💡 创建新房间时选择加密算法；加入已有房间时自动使用房间的算法
-                  </p>
                 </div>
               </>
             )}
@@ -440,23 +420,37 @@ export function StickyNotesPage() {
             {/* 加入按钮 */}
             <button
               onClick={handleJoinRoom}
-              className="w-full py-3 bg-blue-500 text-white font-medium rounded-lg hover:bg-blue-600 transition-colors"
+              className="w-full py-3.5 bg-blue-500 text-white font-medium rounded-lg hover:bg-blue-600 transition-all shadow-sm hover:shadow-md"
             >
               {roomId ? '加入房间' : '创建房间'}
             </button>
 
             {/* 说明 */}
-            <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-              <h3 className="text-sm font-medium text-gray-900 mb-2">特性</h3>
-              <ul className="text-xs text-gray-600 space-y-1">
-                <li>✅ 完全 P2P，局域网运行</li>
-                <li>✅ 实时多人协作</li>
-                <li>✅ 端到端加密（可选）</li>
-                <li>✅ 离线可用，在线自动同步</li>
-                <li>✅ 数据本地存储</li>
-                <li>✅ 支持拖拽、调整大小</li>
-              </ul>
+            <div className="mt-6 pt-6 border-t border-gray-100">
+              <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 text-xs text-gray-500">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-green-500">●</span>
+                  <span>P2P 直连</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-green-500">●</span>
+                  <span>实时协作</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-green-500">●</span>
+                  <span>端到端加密</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-green-500">●</span>
+                  <span>本地存储</span>
+                </div>
+              </div>
             </div>
+          </div>
+
+          {/* Footer */}
+          <div className="mt-8 pt-6 border-t border-gray-200 text-center">
+            <p className="text-xs text-gray-400">MeshKit · P2P 协作工具套件</p>
           </div>
         </div>
       </div>
@@ -471,14 +465,12 @@ export function StickyNotesPage() {
         <div className="max-w-7xl mx-auto">
           {/* 移动端：垂直布局 */}
           <div className="flex flex-col sm:hidden gap-3">
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold text-gray-900">便签墙</h1>
-              <div className="flex items-center gap-2 text-xs">
-                <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-                <span className="text-gray-600">
-                  {isConnected ? `已连接 (${peerCount} 人)` : '未连接'}
-                </span>
-              </div>
+            {/* 连接状态 */}
+            <div className="flex items-center justify-center gap-2 text-xs">
+              <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+              <span className="text-gray-600">
+                {isConnected ? `已连接 (${peerCount} 人)` : '未连接'}
+              </span>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 justify-center">
@@ -654,9 +646,8 @@ export function StickyNotesPage() {
 
           {/* 桌面端：居中布局 */}
           <div className="hidden sm:block">
-            {/* 标题和连接状态 */}
+            {/* 连接状态 */}
             <div className="flex items-center justify-center gap-4 mb-3">
-              <h1 className="text-xl font-bold text-gray-900">便签墙</h1>
               <div className="flex items-center gap-2 text-sm">
                 <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
                 <span className="text-gray-600">

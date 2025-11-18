@@ -129,7 +129,6 @@ export class StickyNotesRoom {
     await this.handlePasswordVerification();
 
     // 密码验证通过后，添加当前用户
-    // 添加当前用户
     this.yUsers.set(this.userId, {
       id: this.userId,
       name: this.userName,
@@ -176,10 +175,6 @@ export class StickyNotesRoom {
 
     // 从本地加载便签
     await this.loadLocalNotes();
-
-    // 处理加密房间的密码验证
-    // 注意：必须先检查房间是否已是加密房间，而不是只看本地的 enableEncryption
-    await this.handlePasswordVerification();
 
     // 初始化房间过期检查
     await this.initializeRoomExpiration();
@@ -313,14 +308,6 @@ export class StickyNotesRoom {
         // 用户没有输入密码，拒绝加入
         await this.leaveRoom();
         throw new Error('房间已设置密码保护！\n\n请勾选"启用端到端加密"并输入正确的密码。');
-      // 不管用户有没有勾选加密，都需要验证密码
-      if (!this.password) {
-        // 用户没有输入密码
-        console.warn('[StickyNotesRoom] This is an encrypted room, but no password provided!');
-        this.isPasswordVerified = false;
-        this.enableEncryption = true; // 标记房间为加密房间
-        this.encryptionMethod = existingMethod;
-        return;
       }
 
       // 验证密码
