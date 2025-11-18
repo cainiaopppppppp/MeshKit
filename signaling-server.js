@@ -185,6 +185,18 @@ function generateRoomId() {
 
 // 向房间内所有成员广播消息
 function broadcastToRoom(room, message, excludeDeviceId = null) {
+  // 🔒 确保不泄露密码
+  if (message.room && message.room.password) {
+    message = {
+      ...message,
+      room: {
+        ...message.room,
+        hasPassword: true
+      }
+    };
+    delete message.room.password;
+  }
+
   room.members.forEach(member => {
     if (member.deviceId !== excludeDeviceId) {
       const device = devices.get(member.deviceId);
@@ -198,7 +210,7 @@ function broadcastToRoom(room, message, excludeDeviceId = null) {
 // 处理创建房间
 function handleCreateRoom(data, ws) {
   const { deviceId, deviceName, data: roomData } = data;
-  const { fileInfo, fileList, isMultiFile } = roomData;
+  const { fileInfo, fileList, isMultiFile, password } = roomData;
 
   const roomId = generateRoomId();
   const room = {
@@ -216,22 +228,29 @@ function handleCreateRoom(data, ws) {
     fileInfo,
     fileList: isMultiFile ? fileList : undefined,
     isMultiFile: isMultiFile || false,
-    status: 'waiting'
+    status: 'waiting',
+    password: password || null  // 存储密码（如果有）
   };
 
   rooms.set(roomId, room);
-  console.log(`🏠 房间创建成功: ${roomId} by ${deviceName}`);
+  console.log(`🏠 房间创建成功: ${roomId} by ${deviceName}${password ? ' 🔒 (有密码保护)' : ''}`);
 
-  // 发送房间创建成功消息
+  // 发送房间创建成功消息（不包含密码）
+  const roomInfo = { ...room };
+  delete roomInfo.password;  // 不发送密码给客户端
+  roomInfo.hasPassword = !!password;  // 但告知是否有密码
+
   ws.send(JSON.stringify({
     type: 'room-update',
-    room
+    room: roomInfo
   }));
 }
 
 // 处理加入房间
 function handleJoinRoom(data, ws) {
-  const { deviceId, deviceName, roomId } = data;
+  const { deviceId, deviceName, roomId, password } = data;
+
+  console.log(`[DEBUG] 加入房间请求 - 房间: ${roomId}, 用户: ${deviceName}, 提供的密码: ${password === undefined ? 'undefined' : password === null ? 'null' : `"${password}"`}`);
 
   const room = rooms.get(roomId);
   if (!room) {
@@ -242,13 +261,58 @@ function handleJoinRoom(data, ws) {
     return;
   }
 
+  console.log(`[DEBUG] 房间密码状态 - 房间密码: ${room.password === undefined ? 'undefined' : room.password === null ? 'null' : `"${room.password}"`}`);
+
+  // 🔒 严格验证密码（如果房间有密码保护）
+  if (room.password !== null && room.password !== undefined && room.password !== '') {
+    console.log(`[DEBUG] 房间需要密码验证`);
+
+    // 必须提供密码
+    if (password === undefined || password === null) {
+      console.log(`❌ ${deviceName} 未提供密码，无法加入房间: ${roomId}`);
+      ws.send(JSON.stringify({
+        type: 'room-error',
+        error: '此房间需要密码'
+      }));
+      return;
+    }
+
+    // 密码不能为空
+    if (typeof password !== 'string' || password.trim() === '') {
+      console.log(`❌ ${deviceName} 密码为空，无法加入房间: ${roomId}`);
+      ws.send(JSON.stringify({
+        type: 'room-error',
+        error: '密码不能为空'
+      }));
+      return;
+    }
+
+    // 密码必须匹配
+    if (password !== room.password) {
+      console.log(`❌ ${deviceName} 密码错误，无法加入房间: ${roomId} (提供: "${password}", 正确: "${room.password}")`);
+      ws.send(JSON.stringify({
+        type: 'room-error',
+        error: '密码错误'
+      }));
+      return;
+    }
+
+    console.log(`✅ ${deviceName} 密码验证成功`);
+  } else {
+    console.log(`[DEBUG] 房间无密码保护，直接允许加入`);
+  }
+
   // 检查是否已经在房间中
   const existingMember = room.members.find(m => m.deviceId === deviceId);
   if (existingMember) {
-    // 已在房间中，直接返回房间信息
+    // 已在房间中，直接返回房间信息（不包含密码）
+    const roomInfo = { ...room };
+    delete roomInfo.password;
+    roomInfo.hasPassword = !!room.password;
+
     ws.send(JSON.stringify({
       type: 'room-update',
-      room
+      room: roomInfo
     }));
     return;
   }
@@ -262,18 +326,23 @@ function handleJoinRoom(data, ws) {
     joinedAt: Date.now()
   });
 
-  console.log(`👤 ${deviceName} 加入房间: ${roomId}`);
+  console.log(`👤 ${deviceName} 加入房间: ${roomId}${room.password ? ' (密码验证通过)' : ''}`);
+
+  // 移除密码字段，只广播必要信息
+  const roomInfo = { ...room };
+  delete roomInfo.password;
+  roomInfo.hasPassword = !!room.password;
 
   // 向所有成员广播房间更新（包括新加入的成员）
   broadcastToRoom(room, {
     type: 'room-update',
-    room
+    room: roomInfo
   });
 
   // 向新成员发送房间信息
   ws.send(JSON.stringify({
     type: 'room-update',
-    room
+    room: roomInfo
   }));
 }
 

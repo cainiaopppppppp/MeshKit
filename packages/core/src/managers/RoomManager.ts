@@ -47,8 +47,9 @@ export class RoomManager {
   /**
    * 创建房间（发送方）
    * 支持单文件和多文件模式
+   * @param password 可选的房间密码
    */
-  async createRoom(fileInfo: FileMetadata, fileList?: FileMetadata[]): Promise<Room> {
+  async createRoom(fileInfo: FileMetadata, fileList?: FileMetadata[], password?: string): Promise<Room> {
     if (!this.myDeviceId || !this.myDeviceName) {
       throw new Error('设备未初始化');
     }
@@ -56,7 +57,7 @@ export class RoomManager {
     // 确保总是有fileList，即使是单文件模式
     const actualFileList = fileList && fileList.length > 0 ? fileList : [fileInfo];
     const isMultiFile = actualFileList.length > 1;
-    console.log('[RoomManager] 创建房间...', isMultiFile ? `多文件模式 (${actualFileList.length} 个文件)` : '单文件模式', fileInfo);
+    console.log('[RoomManager] 创建房间...', isMultiFile ? `多文件模式 (${actualFileList.length} 个文件)` : '单文件模式', fileInfo, password ? '🔒 有密码保护' : '');
 
     // 发送创建房间请求到信令服务器
     signalingClient.send({
@@ -66,7 +67,8 @@ export class RoomManager {
       data: {
         fileInfo,
         fileList: actualFileList,
-        isMultiFile
+        isMultiFile,
+        password: password || undefined  // 传递密码（如果有）
       }
     });
 
@@ -88,20 +90,22 @@ export class RoomManager {
 
   /**
    * 加入房间（接收方）
+   * @param password 可选的房间密码
    */
-  async joinRoom(roomId: string): Promise<Room> {
+  async joinRoom(roomId: string, password?: string): Promise<Room> {
     if (!this.myDeviceId || !this.myDeviceName) {
       throw new Error('设备未初始化');
     }
 
-    console.log('[RoomManager] 加入房间:', roomId);
+    console.log('[RoomManager] 加入房间:', roomId, password ? '🔒 有密码' : '');
 
     // 发送加入房间请求
     signalingClient.send({
       type: 'join-room',
       deviceId: this.myDeviceId!,
       deviceName: this.myDeviceName!,
-      roomId: roomId
+      roomId: roomId,
+      password: password || undefined  // 传递密码（如果有）
     });
 
     // 等待加入成功
@@ -113,6 +117,7 @@ export class RoomManager {
       const handler = (data: { room: Room }) => {
         clearTimeout(timeout);
         eventBus.off('room:joined', handler);
+        eventBus.off('room:error', errorHandler);
         resolve(data.room);
       };
 

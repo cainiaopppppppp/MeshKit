@@ -14,6 +14,10 @@ export function CreateRoom() {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // 密码保护
+  const [enablePassword, setEnablePassword] = useState(false);
+  const [password, setPassword] = useState('');
+
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -122,6 +126,12 @@ export function CreateRoom() {
   };
 
   const handleCreateRoom = async () => {
+    // 验证密码
+    if (enablePassword && !password.trim()) {
+      alert('请输入密码');
+      return;
+    }
+
     if (isQueueMode) {
       // 多文件模式：使用第一个文件创建房间（房间创建后会传输整个队列）
       const firstFile = fileQueue.find(item => item.selected)?.file;
@@ -129,14 +139,14 @@ export function CreateRoom() {
         alert('请先选择文件');
         return;
       }
-      await createRoom(firstFile);
+      await createRoom(firstFile, enablePassword ? password : undefined);
     } else {
       // 单文件模式
       if (!selectedFile) {
         alert('请先选择文件');
         return;
       }
-      await createRoom(selectedFile);
+      await createRoom(selectedFile, enablePassword ? password : undefined);
     }
   };
 
@@ -240,6 +250,39 @@ export function CreateRoom() {
         </div>
       )}
 
+      {/* 密码保护（仅在有文件时显示） */}
+      {(selectedFile || isQueueMode) && (
+        <div className="mb-4">
+          <div className="flex items-center gap-2 mb-3">
+            <input
+              type="checkbox"
+              id="enable-password"
+              checked={enablePassword}
+              onChange={(e) => setEnablePassword(e.target.checked)}
+              className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+            />
+            <label htmlFor="enable-password" className="text-sm text-gray-700 font-medium cursor-pointer">
+              🔒 设置接收密码
+            </label>
+          </div>
+
+          {enablePassword && (
+            <div>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="输入接收密码"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+              />
+              <p className="text-xs text-gray-500 mt-2">
+                接收方需要输入此密码才能接收文件
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
           {error}
@@ -249,7 +292,7 @@ export function CreateRoom() {
       <button
         className="w-full py-3 bg-blue-500 text-white font-medium rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
         onClick={handleCreateRoom}
-        disabled={(!selectedFile && !isQueueMode) || isCreating}
+        disabled={(!selectedFile && !isQueueMode) || isCreating || (enablePassword && !password.trim())}
       >
         {isCreating ? '生成中...' : '生成取件码'}
       </button>
