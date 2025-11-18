@@ -13,6 +13,8 @@ export { eventBus } from './utils/EventBus';
 export { default as EventBus } from './utils/EventBus';
 export { config } from './utils/Config';
 export { default as Config } from './utils/Config';
+export { fileEncryption, FileEncryptionHelper, ENCRYPTION_METHODS } from './utils/FileEncryption';
+export type { EncryptionMethod } from './utils/FileEncryption';
 export * from './utils';
 
 // 管理器
@@ -20,6 +22,8 @@ export { P2PManager, p2pManager } from './managers/P2PManager';
 export { DeviceManager, deviceManager } from './managers/DeviceManager';
 export { FileTransferManager, fileTransferManager } from './managers/FileTransferManager';
 export { RoomManager, roomManager } from './managers/RoomManager';
+export { DeviceBlockManager, deviceBlockManager } from './managers/DeviceBlockManager';
+export type { BlockedDevice } from './managers/DeviceBlockManager';
 
 // 服务
 export { SignalingClient, signalingClient } from './services/SignalingClient';
@@ -77,6 +81,29 @@ export function connectSignaling(url: string) {
   }
 
   signalingClient.connect(url, device.id, device.name);
+}
+
+/**
+ * 更新设备名称
+ *
+ * @param newName - 新的设备名称
+ */
+export function updateDeviceName(newName: string) {
+  if (!newName || newName.trim() === '') {
+    throw new Error('Device name cannot be empty');
+  }
+
+  const trimmedName = newName.trim();
+
+  // 更新设备管理器中的设备名
+  deviceManager.updateMyDeviceName(trimmedName);
+
+  // 通过信令服务器通知其他设备
+  signalingClient.updateDeviceName(trimmedName);
+
+  console.log('[@p2p-transfer/core] Device name updated:', trimmedName);
+
+  return trimmedName;
 }
 
 /**
