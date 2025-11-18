@@ -65,58 +65,68 @@ export function StickyNotesPage() {
       return;
     }
 
-    // 保存用户名到 localStorage
-    if (userName.trim()) {
-      localStorage.setItem('sticky_notes_user_name', userName.trim());
+    try {
+      // 保存用户名到 localStorage
+      if (userName.trim()) {
+        localStorage.setItem('sticky_notes_user_name', userName.trim());
+      }
+
+      const config: RoomConfig = {
+        roomId: roomId.trim(),
+        password: password.trim(),
+        enableEncryption,
+        encryptionMethod,
+      };
+
+      const room = new StickyNotesRoom();
+      roomRef.current = room;
+
+      await room.joinRoom(config, {
+        onNotesChange: (updatedNotes) => {
+          setNotes(updatedNotes);
+        },
+        onUsersChange: (updatedUsers) => {
+          setUsers(updatedUsers);
+        },
+        onConnectionChange: (connected, count) => {
+          setIsConnected(connected);
+          setPeerCount(count);
+        },
+        onRoomDestroyed: () => {
+          alert('房间已被销毁');
+          handleLeaveRoom();
+        },
+        onRoomExpiring: (remainingTime) => {
+          setRoomExpiresIn(remainingTime);
+        },
+      });
+
+      setIsInRoom(true);
+      const info = room.getRoomInfo();
+      setRoomInfo(info);
+
+      // 如果加入的是已存在的加密房间，更新本地的加密算法设置
+      if (info.isExistingEncryptedRoom && info.encryptionMethod) {
+        setEncryptionMethod(info.encryptionMethod);
+        console.log('[StickyNotesPage] Joined existing encrypted room, using algorithm:', info.encryptionMethod);
+      }
+
+      // 加载初始数据
+      const initialNotes = await room.getAllNotes();
+      setNotes(initialNotes);
+      setUsers(room.getAllUsers());
+
+      // 初始化 peerCount
+      setPeerCount(1);
+    } catch (error) {
+      console.error('[StickyNotesPage] Failed to join room:', error);
+      const errorMessage = error instanceof Error ? error.message : '加入房间失败';
+      alert(errorMessage);
+      // 清理失败的房间引用
+      if (roomRef.current) {
+        roomRef.current = null;
+      }
     }
-
-    const config: RoomConfig = {
-      roomId: roomId.trim(),
-      password: password.trim(),
-      enableEncryption,
-      encryptionMethod,
-    };
-
-    const room = new StickyNotesRoom();
-    roomRef.current = room;
-
-    await room.joinRoom(config, {
-      onNotesChange: (updatedNotes) => {
-        setNotes(updatedNotes);
-      },
-      onUsersChange: (updatedUsers) => {
-        setUsers(updatedUsers);
-      },
-      onConnectionChange: (connected, count) => {
-        setIsConnected(connected);
-        setPeerCount(count);
-      },
-      onRoomDestroyed: () => {
-        alert('房间已被销毁');
-        handleLeaveRoom();
-      },
-      onRoomExpiring: (remainingTime) => {
-        setRoomExpiresIn(remainingTime);
-      },
-    });
-
-    setIsInRoom(true);
-    const info = room.getRoomInfo();
-    setRoomInfo(info);
-
-    // 如果加入的是已存在的加密房间，更新本地的加密算法设置
-    if (info.isExistingEncryptedRoom && info.encryptionMethod) {
-      setEncryptionMethod(info.encryptionMethod);
-      console.log('[StickyNotesPage] Joined existing encrypted room, using algorithm:', info.encryptionMethod);
-    }
-
-    // 加载初始数据
-    const initialNotes = await room.getAllNotes();
-    setNotes(initialNotes);
-    setUsers(room.getAllUsers());
-
-    // 初始化 peerCount
-    setPeerCount(1);
   };
 
   // 离开房间
@@ -801,7 +811,7 @@ export function StickyNotesPage() {
                           }}
                           className="flex-1 px-3 py-2 bg-blue-500 text-white text-sm rounded-lg hover:bg-blue-600 transition-colors touch-manipulation"
                         >
-                          使用
+                          使用此颜色
                         </button>
                       </div>
                     </div>

@@ -5,6 +5,7 @@
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { FileTransferPage } from './pages/FileTransferPage';
 import { StickyNotesPage } from './pages/StickyNotesPage';
+import { EncryptedChatPage } from './pages/EncryptedChatPage';
 
 function Navigation() {
   const location = useLocation();
@@ -48,6 +49,16 @@ function Navigation() {
           >
             便签墙
           </Link>
+          <Link
+            to="/encrypted-chat"
+            className={`px-3 sm:px-4 py-2 rounded-lg font-medium transition-colors text-sm sm:text-base touch-manipulation ${
+              location.pathname === '/encrypted-chat'
+                ? 'bg-blue-500 text-white'
+                : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            加密聊天
+          </Link>
         </div>
       </div>
     </nav>
@@ -62,6 +73,10 @@ function App() {
         <Routes>
           <Route path="/" element={<FileTransferPage />} />
           <Route path="/sticky-notes" element={<StickyNotesPage />} />
+<<<<<<< meshchat_zsl
+          <Route path="/encrypted-chat" element={<EncryptedChatPage />} />
+=======
+>>>>>>> main
         </Routes>
       </div>
     </BrowserRouter>

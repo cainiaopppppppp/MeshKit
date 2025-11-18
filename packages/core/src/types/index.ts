@@ -205,4 +205,7 @@ export interface EventMap {
   'room:member-progress': { deviceId: string; progress: number };
   'room:error': { error: string };
   'room:file-request': { deviceId: string; fileIndex: number };
+
+  // Chat events (for encrypted chat module)
+  'chat:message:deleted': { contactId: string; messageId: string };
 }

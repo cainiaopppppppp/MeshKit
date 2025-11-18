@@ -89,6 +89,46 @@ export class StickyNotesRoom {
     this.yUsers = this.ydoc.getMap('users');
     this.yMeta = this.ydoc.getMap('meta');
 
+    // 等待初始同步完成（最多等待 2 秒）
+    // 等待 Yjs 文档从其他 peers 获取数据
+    console.log('[StickyNotesRoom] Waiting for initial sync...');
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => {
+        console.log('[StickyNotesRoom] Sync wait completed (timeout)');
+        resolve();
+      }, 2000);
+
+      // 监听 ydoc 的 update 事件（表示接收到远程数据）
+      let receivedUpdate = false;
+      const updateHandler = () => {
+        if (!receivedUpdate) {
+          receivedUpdate = true;
+          console.log('[StickyNotesRoom] Received initial data from peers');
+          clearTimeout(timeout);
+          // 等待额外 200ms 确保所有数据都接收到
+          setTimeout(() => resolve(), 200);
+        }
+      };
+
+      this.ydoc?.on('update', updateHandler);
+
+      // 如果没有其他 peers，立即继续
+      setTimeout(() => {
+        const peersCount = this.provider?.awareness?.states?.size || 0;
+        if (peersCount <= 1 && !receivedUpdate) {
+          console.log('[StickyNotesRoom] No other peers detected, continuing immediately');
+          this.ydoc?.off('update', updateHandler);
+          clearTimeout(timeout);
+          resolve();
+        }
+      }, 500);
+    });
+
+    // 处理加密房间的密码验证（在添加用户之前）
+    // 必须先检查房间是否已是加密房间
+    await this.handlePasswordVerification();
+
+    // 密码验证通过后，添加当前用户
     // 添加当前用户
     this.yUsers.set(this.userId, {
       id: this.userId,
@@ -262,10 +302,17 @@ export class StickyNotesRoom {
     const existingToken = this.yMeta.get('passwordVerificationToken');
     const existingMethod = this.yMeta.get('encryptionMethod') as EncryptionMethod | undefined;
 
+    console.log('[StickyNotesRoom] Auth token exists:', !!existingToken, 'Password provided:', !!this.password);
+
     if (existingToken && existingMethod) {
       // 房间已存在验证token，说明这是一个加密房间
       console.log('[StickyNotesRoom] Detected encrypted room, verifying password...');
 
+      // 房间已设置密码，用户必须提供密码
+      if (!this.password) {
+        // 用户没有输入密码，拒绝加入
+        await this.leaveRoom();
+        throw new Error('房间已设置密码保护！\n\n请勾选"启用端到端加密"并输入正确的密码。');
       // 不管用户有没有勾选加密，都需要验证密码
       if (!this.password) {
         // 用户没有输入密码
@@ -284,10 +331,13 @@ export class StickyNotesRoom {
       );
 
       if (!this.isPasswordVerified) {
-        console.warn('[StickyNotesRoom] Password verification failed!');
-      } else {
-        console.log('[StickyNotesRoom] Password verified successfully');
+        // 密码验证失败，拒绝加入
+        console.error('[StickyNotesRoom] Password verification failed!');
+        await this.leaveRoom();
+        throw new Error('密码错误！\n\n房间已存在，请输入正确的密码。');
       }
+
+      console.log('[StickyNotesRoom] Password verified successfully');
 
       // 更新为房间的加密设置
       this.enableEncryption = true;
@@ -295,17 +345,24 @@ export class StickyNotesRoom {
     } else if (this.enableEncryption && this.password) {
       // 新房间且用户启用了加密，创建验证token
       console.log('[StickyNotesRoom] Creating password verification token...');
-      const token = await encryptionHelper.createVerificationToken(
-        this.password,
-        this.encryptionMethod
-      );
-      this.yMeta.set('passwordVerificationToken', token);
-      this.yMeta.set('encryptionMethod', this.encryptionMethod);
-      this.isPasswordVerified = true;
-      console.log('[StickyNotesRoom] Password verification token created');
+      try {
+        const token = await encryptionHelper.createVerificationToken(
+          this.password,
+          this.encryptionMethod
+        );
+        this.yMeta.set('passwordVerificationToken', token);
+        this.yMeta.set('encryptionMethod', this.encryptionMethod);
+        this.isPasswordVerified = true;
+        console.log('[StickyNotesRoom] Password verification token created');
+      } catch (error) {
+        console.error('[StickyNotesRoom] Failed to create auth token:', error);
+        await this.leaveRoom();
+        throw new Error('创建密码验证令牌失败');
+      }
     } else {
       // 非加密房间
       this.isPasswordVerified = true;
+      console.log('[StickyNotesRoom] No password protection for this room');
     }
   }
 
