@@ -15,6 +15,12 @@ export interface FileMetadata {
   type: string;
   totalChunks?: number;
   index?: number; // 文件在队列中的索引（用于房间模式同步）
+  passwordProtected?: boolean; // 是否有密码保护
+  passwordSalt?: string; // 密码盐值（Base64）
+  passwordHash?: string; // 密码哈希（用于验证）
+  encrypted?: boolean; // 是否加密文件内容
+  encryptionMethod?: string; // 加密算法 (AES-256-CBC, AES-256-GCM, etc.)
+  verificationToken?: string; // 密码验证token
 }
 
 /**
@@ -131,7 +137,7 @@ export interface SignalingMessage {
 }
 
 export interface ChunkData {
-  type: 'metadata' | 'chunk' | 'complete' | 'ack' | 'file-list' | 'file-selection' | 'start-file' | 'queue-complete';
+  type: 'metadata' | 'chunk' | 'complete' | 'ack' | 'file-list' | 'file-selection' | 'start-file' | 'queue-complete' | 'password-verify' | 'password-rejected' | 'transfer-rejected' | 'receiver-ready' | 'file-list-rejected';
   name?: string;
   size?: number;
   mimeType?: string;
@@ -146,6 +152,21 @@ export interface ChunkData {
   selectedIndexes?: number[]; // 选中的文件索引
   fileIndex?: number; // 当前文件索引
   queueIndex?: number; // 队列中的索引
+  // 发送者信息
+  senderDeviceId?: string; // 发送者设备ID
+  senderDeviceName?: string; // 发送者设备名称
+  // 密码保护相关字段
+  passwordProtected?: boolean; // 是否有密码保护
+  passwordSalt?: string; // 密码盐值（Base64）
+  passwordHash?: string; // 密码哈希（用于验证）
+  password?: string; // 密码（仅用于验证消息）
+  passwordVerified?: boolean; // 密码验证结果
+  error?: string; // 错误信息
+  accepted?: boolean; // 是否接受文件
+  // 加密相关字段
+  encrypted?: boolean; // 是否加密文件内容
+  encryptionMethod?: string; // 加密算法
+  verificationToken?: string; // 密码验证token
 }
 
 export type TransferDirection = 'send' | 'receive';
@@ -176,19 +197,39 @@ export interface EventMap {
   // Transfer events
   'transfer:file-selected': FileMetadata;
   'transfer:preparing': { direction: TransferDirection; file: FileMetadata };
-  'transfer:started': { direction: TransferDirection; file: FileMetadata };
+  'transfer:receive-request': {
+    file: FileMetadata;
+    senderDeviceId?: string;
+    senderDeviceName?: string;
+  };
+  'transfer:started': {
+    direction: TransferDirection;
+    file: FileMetadata;
+    senderDeviceId?: string;
+    senderDeviceName?: string;
+  };
   'transfer:progress': TransferProgress;
   'transfer:broadcast-progress': { memberProgress: Record<string, number>; avgProgress: number };
   'transfer:completed': { direction: TransferDirection; duration: number; avgSpeed: number };
   'transfer:error': { error: Error; direction: TransferDirection };
   'transfer:cancelled': { direction: TransferDirection };
+  'transfer:rejected': { direction: TransferDirection; message?: string };
   'transfer:downloaded': { filename: string; size: number };
   'transfer:download-blocked': { reason: string };
   'transfer:download-started': { filename: string; streaming: boolean };
 
   // 文件队列事件
   'transfer:queue-updated': { queue: FileQueueItem[]; direction: 'send' | 'receive' | null };
-  'transfer:file-list-received': { files: FileMetadata[]; totalSize: number };
+  'transfer:file-list-received': {
+    files: FileMetadata[];
+    totalSize: number;
+    senderDeviceId?: string;
+    senderDeviceName?: string;
+    passwordProtected?: boolean;
+    encrypted?: boolean;
+    encryptionMethod?: string;
+    verificationToken?: string;
+  };
   'transfer:file-item-started': { fileIndex: number; file: FileMetadata };
   'transfer:file-item-completed': { fileIndex: number; file: FileMetadata; blob?: Blob };
   'transfer:file-item-failed': { fileIndex: number; file: FileMetadata; error: Error };

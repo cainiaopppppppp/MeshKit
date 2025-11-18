@@ -45,8 +45,8 @@ export function useRoom() {
         }));
         console.log('[useRoom] Creating room in queue mode:', fileQueue.length, 'files');
       } else {
-        // 单文件模式：选择文件（Room模式跳过验证，避免大文件阻塞）
-        const success = await fileTransferManager.selectFile(file, true); // skipValidation=true
+        // 单文件模式：使用selectFiles创建队列（Room模式也需要队列来支持sendSingleFileFromQueue）
+        const success = await fileTransferManager.selectFiles([file], true); // skipValidation=true
         if (!success) {
           throw new Error('文件选择失败');
         }
@@ -56,6 +56,12 @@ export function useRoom() {
           size: file.size,
           type: file.type,
         };
+
+        // 创建单文件列表（包含索引）
+        fileList = [{
+          ...fileInfo,
+          index: 0, // 单文件索引为0
+        }];
       }
 
       // 创建房间（传递文件列表和密码）

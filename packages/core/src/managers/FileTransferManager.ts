@@ -6,7 +6,9 @@ import type { DataConnection } from 'peerjs';
 import { eventBus } from '../utils/EventBus';
 import { config } from '../utils/Config';
 import { p2pManager } from './P2PManager';
+import { deviceManager } from './DeviceManager';
 import type { FileMetadata, ChunkData, TransferDirection, FileQueueItem } from '../types';
+import { FileEncryptionHelper, type EncryptionMethod } from '../utils/FileEncryption';
 // @ts-ignore - StreamSaver doesn't have types
 import streamSaver from 'streamsaver';
 
@@ -70,6 +72,34 @@ export class FileTransferManager {
   private transferStartTime: number = 0;
   private transferredBytes: number = 0;
   private transferTimeout: number | null = null;
+
+  // 加密配置
+  private encryptionPassword: string | null = null;
+  private enableEncryption: boolean = false;
+  private encryptionMethod: EncryptionMethod = 'AES-256-CBC';
+  private encryptionHelper: FileEncryptionHelper = new FileEncryptionHelper();
+
+  // 接收端密码（用于解密）
+  private receivePassword: string | null = null;
+
+  // 队列加密配置（用于多文件传输）
+  private queueEncryptionConfig: {
+    passwordProtected?: boolean;
+    encrypted?: boolean;
+    encryptionMethod?: string;
+    verificationToken?: string;
+  } | null = null;
+
+  // 接收确认状态
+  private pendingReceiveMetadata: ChunkData | null = null;
+  private waitingForReceiveConfirmation: boolean = false;
+  private pendingChunks: ChunkData[] = []; // 等待确认期间收到的chunks
+
+  // 发送等待确认状态
+  private waitingForReceiverReady: boolean = false;
+  private receiverReadyResolver: ((value: void) => void) | null = null;
+  private receiverReadyRejecter: ((reason: Error) => void) | null = null;
+  private receiverReadyTimeout: number | null = null;
 
   constructor() {
     this.setupEventListeners();
@@ -484,7 +514,11 @@ export class FileTransferManager {
   /**
    * 发送文件列表（点对点模式）
    */
-  async sendFileList(targetDeviceId: string): Promise<boolean> {
+  async sendFileList(targetDeviceId: string, encryptionOptions?: {
+    password: string | null;
+    enableEncryption: boolean;
+    encryptionMethod: string;
+  }): Promise<boolean> {
     if (!this.isQueueMode || this.fileQueue.length === 0) {
       console.error('[FileTransferManager] No file queue available');
       return false;
@@ -497,6 +531,14 @@ export class FileTransferManager {
 
     try {
       console.log(`[FileTransferManager] Sending file list to ${targetDeviceId}`);
+
+      // 保存加密配置
+      if (encryptionOptions) {
+        this.encryptionPassword = encryptionOptions.password;
+        this.enableEncryption = encryptionOptions.enableEncryption;
+        this.encryptionMethod = encryptionOptions.encryptionMethod as any;
+        console.log(`[FileTransferManager] Queue encryption enabled: ${this.enableEncryption}, method: ${this.encryptionMethod}`);
+      }
 
       // 建立连接 - 必须确保连接已打开
       let conn: DataConnection | null = p2pManager.getConnection(targetDeviceId, 'outgoing') || null;
@@ -516,15 +558,40 @@ export class FileTransferManager {
       // 计算总大小
       const totalSize = this.fileQueue.reduce((sum, item) => sum + item.file.size, 0);
 
-      // 发送文件列表元数据
+      // 获取当前设备信息
+      const myDevice = deviceManager.getMyDevice();
+      const senderDeviceId = myDevice?.id || 'unknown';
+      const senderDeviceName = myDevice?.name || '未知设备';
+
+      // 生成密码验证token（如果有密码）
+      let verificationToken: string | undefined;
+      if (this.encryptionPassword && this.encryptionMethod) {
+        verificationToken = await this.encryptionHelper.createVerificationToken(
+          this.encryptionPassword,
+          this.encryptionMethod
+        );
+      }
+
+      // 发送文件列表元数据（包含加密信息和发送方信息）
       const fileListMessage: ChunkData = {
         type: 'file-list',
         files: this.fileQueue.map(item => item.metadata),
         totalSize,
+        // 发送方信息
+        senderDeviceId,
+        senderDeviceName,
+        // 添加加密配置
+        passwordProtected: !!this.encryptionPassword,
+        encrypted: this.enableEncryption,
+        encryptionMethod: this.encryptionMethod,
+        verificationToken,
       };
 
       conn.send(fileListMessage);
       console.log(`[FileTransferManager] ✅ File list sent: ${this.fileQueue.length} files, ${(totalSize / 1024 / 1024).toFixed(2)} MB total`);
+      if (this.encryptionPassword) {
+        console.log(`[FileTransferManager] 🔒 Files are password protected`);
+      }
 
       return true;
     } catch (error) {
@@ -581,6 +648,24 @@ export class FileTransferManager {
 
     console.log(`[FileTransferManager] 📋 Received file list: ${data.files.length} files, ${(data.totalSize / 1024 / 1024).toFixed(2)} MB total`);
 
+    // 保存加密配置信息（用于队列传输）
+    if (data.passwordProtected || data.encrypted) {
+      console.log(`[FileTransferManager] 🔒 Queue is encrypted:`, {
+        passwordProtected: data.passwordProtected,
+        encrypted: data.encrypted,
+        method: data.encryptionMethod,
+      });
+      // 暂存加密信息，等待用户输入密码
+      this.queueEncryptionConfig = {
+        passwordProtected: data.passwordProtected,
+        encrypted: data.encrypted,
+        encryptionMethod: data.encryptionMethod,
+        verificationToken: data.verificationToken,
+      };
+    } else {
+      this.queueEncryptionConfig = null;
+    }
+
     // 保存旧队列，用于保留已下载文件的状态
     const oldQueue = this.fileQueue || [];
 
@@ -626,13 +711,69 @@ export class FileTransferManager {
     this.currentQueueIndex = -1;
     this.receiveConnection = p2pManager.getConnection(peer, 'incoming') || null;
 
-    // 通知UI显示文件选择界面
+    // 通知UI显示文件选择界面（包含加密信息和发送方信息）
     eventBus.emit('transfer:file-list-received', {
       files: data.files,
       totalSize: data.totalSize,
+      senderDeviceId: data.senderDeviceId,
+      senderDeviceName: data.senderDeviceName,
+      passwordProtected: data.passwordProtected,
+      encrypted: data.encrypted,
+      encryptionMethod: data.encryptionMethod,
+      verificationToken: data.verificationToken,
     });
 
     eventBus.emit('transfer:queue-updated', { queue: this.fileQueue, direction: this.queueDirection });
+  }
+
+  /**
+   * 拒绝接收文件列表（用户点击拒绝队列传输）
+   */
+  rejectFileList(): void {
+    if (!this.isQueueMode || this.queueDirection !== 'receive') {
+      console.warn('[FileTransferManager] No pending file list to reject');
+      return;
+    }
+
+    console.log('[FileTransferManager] User rejected file list');
+
+    const peerId = this.receiveConnection?.peer;
+
+    // 发送拒绝消息给发送方
+    if (this.receiveConnection) {
+      try {
+        this.receiveConnection.send({
+          type: 'file-list-rejected',
+        } as ChunkData);
+        console.log('[FileTransferManager] File list rejection message sent');
+      } catch (error) {
+        console.error('[FileTransferManager] Failed to send file list rejection:', error);
+      }
+
+      // 关键：主动关闭连接，确保下次重新建立连接
+      try {
+        this.receiveConnection.close();
+        console.log('[FileTransferManager] Closed receive connection after file list rejection');
+      } catch (error) {
+        console.error('[FileTransferManager] Failed to close connection:', error);
+      }
+
+      // 从 P2PManager 中移除连接
+      if (peerId) {
+        p2pManager.closeConnection(peerId, 'incoming');
+      }
+
+      this.receiveConnection = null;
+    }
+
+    // 清理队列状态
+    this.isQueueMode = false;
+    this.queueDirection = null;
+    this.fileQueue = [];
+    this.currentQueueIndex = -1;
+    this.queueEncryptionConfig = null;
+
+    eventBus.emit('transfer:rejected', { direction: 'receive' });
   }
 
   /**
@@ -836,7 +977,16 @@ export class FileTransferManager {
 
       const start = i * chunkSize;
       const end = Math.min(start + chunkSize, file.size);
-      const chunk = await this.readFileChunk(file, start, end);
+      let chunk = await this.readFileChunk(file, start, end);
+
+      // 加密chunk（如果启用了加密）
+      if (this.enableEncryption && this.encryptionPassword) {
+        chunk = await this.encryptionHelper.encryptArrayBuffer(
+          chunk,
+          this.encryptionPassword,
+          this.encryptionMethod
+        );
+      }
 
       conn.send({
         type: 'chunk',
@@ -845,8 +995,9 @@ export class FileTransferManager {
         fileIndex: queueItem.index, // 标识当前文件
       } as ChunkData);
 
-      // 等待ACK
-      await this.waitForAck(i, 10000);
+      // 等待ACK（第一个chunk使用更长超时，因为接收方可能在输入密码）
+      const ackTimeout = i === 0 ? 60000 : 30000; // 第一个chunk等60秒，其他30秒
+      await this.waitForAck(i, ackTimeout);
 
       this.transferredBytes += chunk.byteLength;
       queueItem.progress = ((i + 1) / totalChunks) * 100;
@@ -943,7 +1094,14 @@ export class FileTransferManager {
   /**
    * 发送文件
    */
-  async sendFile(targetDeviceId: string): Promise<boolean> {
+  async sendFile(
+    targetDeviceId: string,
+    options?: {
+      password?: string | null;
+      enableEncryption?: boolean;
+      encryptionMethod?: EncryptionMethod;
+    }
+  ): Promise<boolean> {
     if (!this.currentFile) {
       console.error('[FileTransferManager] No file selected');
       return false;
@@ -955,7 +1113,25 @@ export class FileTransferManager {
     }
 
     try {
+      // 保存加密配置
+      if (options) {
+        this.encryptionPassword = options.password || null;
+        this.enableEncryption = options.enableEncryption || false;
+        this.encryptionMethod = options.encryptionMethod || 'AES-256-CBC';
+      } else {
+        this.encryptionPassword = null;
+        this.enableEncryption = false;
+        this.encryptionMethod = 'AES-256-CBC';
+      }
+
       console.log(`[FileTransferManager] Preparing to send ${this.currentFile.name} (${(this.currentFile.size / 1024 / 1024).toFixed(2)} MB)`);
+      if (this.encryptionPassword || this.enableEncryption) {
+        console.log('[FileTransferManager] Encryption enabled:', {
+          hasPassword: !!this.encryptionPassword,
+          encryption: this.enableEncryption,
+          method: this.encryptionMethod,
+        });
+      }
 
       // 立即显示准备状态（重要：即时反馈）
       eventBus.emit('transfer:preparing', {
@@ -1293,7 +1469,9 @@ export class FileTransferManager {
 
         // 等待所有成员的ACK
         try {
-          await this.waitForAllAcks(i, 10000); // 10秒ACK超时
+          // 第一个chunk使用更长超时，其他成员可能在输入密码
+          const ackTimeout = i === 0 ? 90000 : 45000; // 第一个chunk等90秒（多人），其他45秒
+          await this.waitForAllAcks(i, ackTimeout);
         } catch (error) {
           console.error(`[FileTransfer] ACK timeout for chunk ${i}:`, error);
           throw error;
@@ -1378,14 +1556,53 @@ export class FileTransferManager {
       // 设置传输超时
       this.setupTransferTimeout(timeout);
 
-      // 发送元数据
-      this.sendConnection.send({
+      // 获取当前设备信息
+      const myDevice = deviceManager.getMyDevice();
+      const senderDeviceId = myDevice?.id || 'unknown';
+      const senderDeviceName = myDevice?.name || '未知设备';
+
+      // 生成密码验证token（如果有密码）
+      let verificationToken: string | undefined;
+      if (this.encryptionPassword) {
+        try {
+          verificationToken = await this.encryptionHelper.createVerificationToken(
+            this.encryptionPassword,
+            this.encryptionMethod
+          );
+          console.log('[FileTransfer] Password verification token generated');
+        } catch (error) {
+          console.error('[FileTransfer] Failed to generate verification token:', error);
+        }
+      }
+
+      // 发送元数据（包含加密信息）
+      const metadata: ChunkData = {
         type: 'metadata',
         name: file.name,
         size: file.size,
         mimeType: file.type,
         totalChunks: totalChunks,
-      } as ChunkData);
+        senderDeviceId,
+        senderDeviceName,
+        passwordProtected: !!this.encryptionPassword,
+        encrypted: this.enableEncryption,
+        encryptionMethod: this.enableEncryption ? this.encryptionMethod : undefined,
+        verificationToken,
+      };
+
+      this.sendConnection.send(metadata);
+
+      // 等待接收方确认ready
+      console.log('[FileTransfer] Waiting for receiver to accept and verify password...');
+      this.waitingForReceiverReady = true;
+
+      try {
+        await this.waitForReceiverReady(120000); // 等待最多2分钟（用户需要时间输入密码）
+        console.log('[FileTransfer] Receiver is ready, starting transmission');
+      } catch (error) {
+        console.error('[FileTransfer] Receiver ready timeout:', error);
+        throw new Error('接收方未确认接收，传输已取消\n\n可能原因：\n1. 接收方拒绝了传输\n2. 接收方密码验证失败\n3. 接收方未响应');
+      }
 
       // 流式读取并发送分块
       for (let i = 0; i < totalChunks; i++) {
@@ -1396,7 +1613,24 @@ export class FileTransferManager {
         const end = Math.min(start + chunkSize, file.size);
 
         // 逐块读取文件，避免一次性读入内存
-        const chunk = await this.readFileChunk(file, start, end);
+        let chunk = await this.readFileChunk(file, start, end);
+
+        // 如果启用加密，加密chunk
+        if (this.enableEncryption && this.encryptionPassword) {
+          try {
+            chunk = await this.encryptionHelper.encryptArrayBuffer(
+              chunk,
+              this.encryptionPassword,
+              this.encryptionMethod
+            );
+            if (i === 0) {
+              console.log('[FileTransfer] 🔐 Encrypting chunks with', this.encryptionMethod);
+            }
+          } catch (error) {
+            console.error('[FileTransfer] Encryption failed for chunk', i, error);
+            throw new Error(`加密失败: ${(error as Error).message}`);
+          }
+        }
 
         this.sendConnection.send({
           type: 'chunk',
@@ -1406,10 +1640,13 @@ export class FileTransferManager {
 
         // 等待ACK确认（关键！确保接收方收到了）
         try {
-          await this.waitForAck(i, 10000); // 10秒ACK超时
+          // 第一个chunk使用更长超时，因为接收方可能在输入密码
+          const ackTimeout = i === 0 ? 60000 : 30000; // 第一个chunk等60秒，其他30秒
+          await this.waitForAck(i, ackTimeout);
         } catch (error) {
           console.error(`[FileTransfer] ACK timeout for chunk ${i}:`, error);
-          throw error; // 传输失败
+          // 抛出友好的错误信息
+          throw error;
         }
 
         this.transferredBytes += chunk.byteLength;
@@ -1644,14 +1881,60 @@ export class FileTransferManager {
   }
 
   /**
+   * 等待接收方ready确认（带超时）
+   */
+  private async waitForReceiverReady(timeoutMs: number = 120000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      // 设置超时
+      const timeout = setTimeout(() => {
+        this.waitingForReceiverReady = false;
+        this.receiverReadyResolver = null;
+        this.receiverReadyRejecter = null;
+        this.receiverReadyTimeout = null;
+        reject(new Error(`等待接收方确认超时 (${timeoutMs / 1000}秒)`));
+      }, timeoutMs);
+
+      // 保存timeout ID
+      this.receiverReadyTimeout = timeout as any;
+
+      // 保存resolver
+      this.receiverReadyResolver = () => {
+        if (this.receiverReadyTimeout) {
+          clearTimeout(this.receiverReadyTimeout);
+        }
+        this.waitingForReceiverReady = false;
+        this.receiverReadyResolver = null;
+        this.receiverReadyRejecter = null;
+        this.receiverReadyTimeout = null;
+        resolve();
+      };
+
+      // 保存rejecter
+      this.receiverReadyRejecter = (error: Error) => {
+        if (this.receiverReadyTimeout) {
+          clearTimeout(this.receiverReadyTimeout);
+        }
+        this.waitingForReceiverReady = false;
+        this.receiverReadyResolver = null;
+        this.receiverReadyRejecter = null;
+        this.receiverReadyTimeout = null;
+        reject(error);
+      };
+    });
+  }
+
+  /**
    * 等待ACK确认（带超时）
    */
-  private async waitForAck(chunkIndex: number, timeoutMs: number = 10000): Promise<void> {
+  private async waitForAck(chunkIndex: number, timeoutMs: number = 30000): Promise<void> {
     return new Promise((resolve, reject) => {
       // 设置超时
       const timeout = setTimeout(() => {
         this.pendingAcks.delete(chunkIndex);
-        reject(new Error(`ACK timeout for chunk ${chunkIndex}`));
+        const errorMsg = chunkIndex === 0
+          ? `等待接收方确认超时 (${timeoutMs / 1000}秒)\n\n可能原因：\n1. 接收方正在输入密码，请稍候\n2. 网络连接不稳定\n3. 接收方已断开连接`
+          : `传输chunk ${chunkIndex}超时 (${timeoutMs / 1000}秒)`;
+        reject(new Error(errorMsg));
       }, timeoutMs);
 
       // 保存resolver
@@ -1780,50 +2063,50 @@ export class FileTransferManager {
 
     // 单文件传输消息类型（向后兼容）
     if (data.type === 'metadata') {
-      // 接收元数据
-      this.receiveMetadata = {
-        name: data.name!,
-        size: data.size!,
-        type: data.mimeType!,
-        totalChunks: data.totalChunks,
-      };
-      this.receiveChunks.clear();
-      this.receiveBlobParts = [];
-      this.nextBatchIndex = 0;
-      this.receivedChunkCount = 0;
-      this.transferStartTime = Date.now();
-      this.transferredBytes = 0;
-      this.isTransferring = true;
-      this.transferDirection = 'receive';
+      console.log(`[FileTransfer] Metadata received: ${data.name} (${(data.size! / 1024 / 1024).toFixed(2)} MB)`);
 
-      // 设置接收超时
-      const timeout = config.get('transfer').timeout;
-      this.setupTransferTimeout(timeout);
-
-      console.log(`[FileTransfer] Receiving ${data.name} (${(data.size! / 1024 / 1024).toFixed(2)} MB) in ${data.totalChunks} chunks`);
-
-      // 检测是否使用流式下载
-      this.isStreamingDownload = this.shouldUseStreamingDownload(data.size!);
-
-      if (this.isStreamingDownload) {
-        console.log('[FileTransfer] ✅ Using streaming download (mobile device or large file)');
-        this.initStreamingDownload(data.name!, data.size!);
-      } else {
-        console.log('[FileTransfer] Using standard download (buffered in memory)');
+      // 如果之前有待确认的metadata，说明上一次传输可能被拒绝了，清理旧状态
+      if (this.waitingForReceiveConfirmation && this.pendingReceiveMetadata) {
+        console.log('[FileTransfer] Cleaning up previous pending receive state');
+        this.waitingForReceiveConfirmation = false;
+        this.pendingReceiveMetadata = null;
+        this.pendingChunks = [];
       }
 
-      eventBus.emit('transfer:started', {
-        direction: 'receive',
+      // 保存metadata，等待用户确认
+      this.pendingReceiveMetadata = data;
+      this.waitingForReceiveConfirmation = true;
+      this.pendingChunks = []; // 清空pending chunks
+
+      // 触发接收请求事件，让UI显示确认对话框
+      eventBus.emit('transfer:receive-request', {
         file: {
           name: data.name!,
           size: data.size!,
           type: data.mimeType!,
+          passwordProtected: data.passwordProtected,
+          encrypted: data.encrypted,
+          encryptionMethod: data.encryptionMethod,
+          verificationToken: data.verificationToken,
         },
+        senderDeviceId: data.senderDeviceId,
+        senderDeviceName: data.senderDeviceName,
       });
 
-      // 如果在房间模式下，通知房主更新成员状态为receiving
-      this.notifyRoomStatusReceiving();
+      console.log('[FileTransfer] Waiting for user confirmation...');
     } else if (data.type === 'chunk') {
+      // 如果正在等待用户确认，先缓存chunks，但仍然发送ACK避免发送方超时
+      if (this.waitingForReceiveConfirmation) {
+        console.log(`[FileTransfer] Buffering chunk ${data.index} while waiting for confirmation`);
+        this.pendingChunks.push(data);
+
+        // 关键修复：即使在等待确认期间也要发送ACK，避免发送方超时
+        if (data.index !== undefined) {
+          this.sendAck(data.index);
+        }
+        return;
+      }
+
       // 接收分块
       if (data.index !== undefined && data.data) {
         // 检查是否有fileIndex（并发模式）
@@ -1832,9 +2115,28 @@ export class FileTransferManager {
           const fileIndex = data.fileIndex;
           const receiveState = this.fileReceiveStates.get(fileIndex)!;
 
-          receiveState.chunks.set(data.index, data.data);
+          let chunkData = data.data;
+
+          // 如果队列已加密且有接收密码，解密chunk
+          if (this.queueEncryptionConfig?.encrypted && this.receivePassword) {
+            try {
+              chunkData = await this.encryptionHelper.decryptArrayBuffer(
+                chunkData,
+                this.receivePassword,
+                this.queueEncryptionConfig.encryptionMethod as EncryptionMethod
+              );
+              if (data.index === 0) {
+                console.log('[FileTransfer] 🔓 Decrypting queue file chunks with', this.queueEncryptionConfig.encryptionMethod);
+              }
+            } catch (error) {
+              console.error('[FileTransfer] Queue decryption failed for chunk', data.index, error);
+              throw new Error(`解密失败: ${(error as Error).message}`);
+            }
+          }
+
+          receiveState.chunks.set(data.index, chunkData);
           receiveState.receivedChunkCount++;
-          receiveState.transferredBytes += data.data.byteLength;
+          receiveState.transferredBytes += data.data.byteLength; // 使用原始大小计算传输字节
 
           // 发送ACK确认
           this.sendAck(data.index);
@@ -1875,9 +2177,28 @@ export class FileTransferManager {
           }
         } else {
           // 向后兼容：单文件模式
-          this.receiveChunks.set(data.index, data.data);
+          let chunkData = data.data;
+
+          // 如果文件已加密且有接收密码，解密chunk
+          if (this.receiveMetadata?.encrypted && this.receivePassword) {
+            try {
+              chunkData = await this.encryptionHelper.decryptArrayBuffer(
+                chunkData,
+                this.receivePassword,
+                this.receiveMetadata.encryptionMethod as EncryptionMethod
+              );
+              if (data.index === 0) {
+                console.log('[FileTransfer] 🔓 Decrypting chunks with', this.receiveMetadata.encryptionMethod);
+              }
+            } catch (error) {
+              console.error('[FileTransfer] Decryption failed for chunk', data.index, error);
+              throw new Error(`解密失败: ${(error as Error).message}`);
+            }
+          }
+
+          this.receiveChunks.set(data.index, chunkData);
           this.receivedChunkCount++;
-          this.transferredBytes += data.data.byteLength;
+          this.transferredBytes += data.data.byteLength; // 使用原始大小计算传输字节
 
           // 发送ACK确认（关键！让发送方知道已收到）
           this.sendAck(data.index);
@@ -1914,6 +2235,96 @@ export class FileTransferManager {
           // 点对点模式：处理ACK
           this.handleAck(data.ackIndex);
         }
+      }
+    } else if (data.type === 'transfer-rejected') {
+      // 接收方拒绝了传输
+      console.log('[FileTransferManager] Transfer rejected by receiver');
+
+      // 如果正在等待接收方ready，立即终止等待
+      if (this.waitingForReceiverReady && this.receiverReadyRejecter) {
+        console.log('[FileTransferManager] Rejecting receiver ready wait due to transfer rejection');
+        this.receiverReadyRejecter(new Error('接收方拒绝了文件传输'));
+        // receiverReadyRejecter 会清理所有状态，不需要手动清理
+      } else {
+        // 如果不在等待状态，手动清理
+        this.waitingForReceiverReady = false;
+        this.receiverReadyResolver = null;
+        this.receiverReadyRejecter = null;
+        if (this.receiverReadyTimeout) {
+          clearTimeout(this.receiverReadyTimeout);
+          this.receiverReadyTimeout = null;
+        }
+      }
+
+      // 关键改进：主动关闭发送方连接，确保下次重新建立连接
+      const peerId = this.sendConnection?.peer;
+      if (this.sendConnection) {
+        try {
+          this.sendConnection.close();
+          console.log('[FileTransferManager] Closed send connection after rejection');
+        } catch (error) {
+          console.error('[FileTransferManager] Failed to close send connection:', error);
+        }
+
+        // 从 P2PManager 中移除连接
+        if (peerId) {
+          p2pManager.closeConnection(peerId, 'outgoing');
+        }
+
+        this.sendConnection = null;
+      }
+
+      // 重置发送状态，允许重新发送
+      this.isTransferring = false;
+      this.transferDirection = null;
+      this.clearTransferTimeout();
+
+      // 触发事件通知UI
+      eventBus.emit('transfer:rejected', {
+        direction: 'send',
+        message: '接收方拒绝了文件传输'
+      });
+    } else if (data.type === 'file-list-rejected') {
+      // 接收方拒绝了文件列表
+      console.log('[FileTransferManager] File list rejected by receiver');
+
+      // 关键：主动关闭发送方连接，确保下次重新建立连接
+      const peerId = this.sendConnection?.peer;
+      if (this.sendConnection) {
+        try {
+          this.sendConnection.close();
+          console.log('[FileTransferManager] Closed send connection after file list rejection');
+        } catch (error) {
+          console.error('[FileTransferManager] Failed to close send connection:', error);
+        }
+
+        // 从 P2PManager 中移除连接
+        if (peerId) {
+          p2pManager.closeConnection(peerId, 'outgoing');
+        }
+
+        this.sendConnection = null;
+      }
+
+      // 重置传输状态，但保留文件队列以便再次发送
+      // 不清空 isQueueMode, queueDirection, fileQueue，这样用户可以再次发送相同的文件
+      this.currentQueueIndex = -1;
+      this.isTransferring = false;
+      this.transferDirection = null;
+
+      // 触发事件通知UI
+      eventBus.emit('transfer:rejected', {
+        direction: 'send',
+        message: '接收方拒绝了文件列表'
+      });
+    } else if (data.type === 'receiver-ready') {
+      // 接收方已就绪，可以开始传输chunks
+      console.log('[FileTransferManager] ✅ Receiver is ready, resolving waitForReceiverReady');
+
+      if (this.receiverReadyResolver) {
+        this.receiverReadyResolver();
+      } else {
+        console.warn('[FileTransferManager] Received receiver-ready but no resolver waiting');
       }
     } else if (data.type === 'complete') {
       // 接收完成
@@ -2638,6 +3049,24 @@ export class FileTransferManager {
     this.transferStartTime = 0;
     this.transferredBytes = 0;
 
+    // 清理接收确认状态
+    this.waitingForReceiveConfirmation = false;
+    this.pendingReceiveMetadata = null;
+    this.pendingChunks = [];
+
+    // 清理发送等待状态
+    this.waitingForReceiverReady = false;
+    this.receiverReadyResolver = null;
+    this.receiverReadyRejecter = null;
+    if (this.receiverReadyTimeout) {
+      clearTimeout(this.receiverReadyTimeout);
+      this.receiverReadyTimeout = null;
+    }
+
+    // 清理ACK等待状态
+    this.pendingAcks.clear();
+    this.lastAckedIndex = -1;
+
     // 清理广播模式状态
     this.isBroadcastMode = false;
     this.broadcastConnections.clear();
@@ -2660,6 +3089,158 @@ export class FileTransferManager {
     this.currentFile = null;
     this.downloadBlob = null;
     this.downloadFilename = '';
+    // 清空加密配置
+    this.encryptionPassword = null;
+    this.enableEncryption = false;
+    this.receivePassword = null;
+  }
+
+  /**
+   * 设置接收密码（用于解密）
+   */
+  setReceivePassword(password: string | null): void {
+    this.receivePassword = password;
+    console.log('[FileTransferManager] Receive password set:', !!password);
+  }
+
+  /**
+   * 确认接收文件（用户点击接受）
+   */
+  async confirmReceive(): Promise<void> {
+    if (!this.waitingForReceiveConfirmation || !this.pendingReceiveMetadata) {
+      console.warn('[FileTransferManager] No pending receive to confirm');
+      return;
+    }
+
+    const data = this.pendingReceiveMetadata;
+    console.log('[FileTransferManager] User confirmed receive, starting transfer...');
+
+    // 初始化接收状态
+    this.receiveMetadata = {
+      name: data.name!,
+      size: data.size!,
+      type: data.mimeType!,
+      totalChunks: data.totalChunks,
+      passwordProtected: data.passwordProtected,
+      encrypted: data.encrypted,
+      encryptionMethod: data.encryptionMethod,
+      verificationToken: data.verificationToken,
+    };
+
+    this.receiveChunks.clear();
+    this.receiveBlobParts = [];
+    this.nextBatchIndex = 0;
+    this.receivedChunkCount = 0;
+    this.transferStartTime = Date.now();
+    this.transferredBytes = 0;
+    this.isTransferring = true;
+    this.transferDirection = 'receive';
+    this.waitingForReceiveConfirmation = false;
+
+    // 设置接收超时
+    const timeout = config.get('transfer').timeout;
+    this.setupTransferTimeout(timeout);
+
+    console.log(`[FileTransfer] Receiving ${data.name} (${(data.size! / 1024 / 1024).toFixed(2)} MB) in ${data.totalChunks} chunks`);
+    if (data.passwordProtected || data.encrypted) {
+      console.log('[FileTransfer] File has encryption:', {
+        passwordProtected: data.passwordProtected,
+        encrypted: data.encrypted,
+        method: data.encryptionMethod,
+      });
+    }
+
+    // 检测是否使用流式下载
+    this.isStreamingDownload = this.shouldUseStreamingDownload(data.size!);
+
+    if (this.isStreamingDownload) {
+      console.log('[FileTransfer] ✅ Using streaming download (mobile device or large file)');
+      this.initStreamingDownload(data.name!, data.size!);
+    } else {
+      console.log('[FileTransfer] Using standard download (buffered in memory)');
+    }
+
+    // 触发传输开始事件
+    eventBus.emit('transfer:started', {
+      direction: 'receive',
+      file: {
+        name: data.name!,
+        size: data.size!,
+        type: data.mimeType!,
+        passwordProtected: data.passwordProtected,
+        encrypted: data.encrypted,
+        encryptionMethod: data.encryptionMethod,
+        verificationToken: data.verificationToken,
+      },
+      senderDeviceId: data.senderDeviceId,
+      senderDeviceName: data.senderDeviceName,
+    });
+
+    // 如果在房间模式下，通知房主更新成员状态为receiving
+    this.notifyRoomStatusReceiving();
+
+    // 关键：发送ready消息给发送方，告知可以开始传输chunks
+    if (this.receiveConnection) {
+      const readyMessage: ChunkData = { type: 'receiver-ready' };
+      this.receiveConnection.send(readyMessage);
+      console.log('[FileTransferManager] ✅ Sent receiver-ready message to sender');
+    }
+
+    // 处理缓存的chunks
+    console.log(`[FileTransfer] Processing ${this.pendingChunks.length} buffered chunks`);
+    for (const chunkData of this.pendingChunks) {
+      await this.handleIncomingData(chunkData);
+    }
+    this.pendingChunks = [];
+    this.pendingReceiveMetadata = null;
+  }
+
+  /**
+   * 拒绝接收文件（用户点击拒绝）
+   */
+  rejectReceive(): void {
+    if (!this.waitingForReceiveConfirmation) {
+      console.warn('[FileTransferManager] No pending receive to reject');
+      return;
+    }
+
+    console.log('[FileTransferManager] User rejected receive');
+
+    const peerId = this.receiveConnection?.peer;
+
+    // 发送拒绝消息给发送方
+    if (this.receiveConnection) {
+      try {
+        this.receiveConnection.send({
+          type: 'transfer-rejected',
+        } as ChunkData);
+        console.log('[FileTransferManager] Rejection message sent');
+      } catch (error) {
+        console.error('[FileTransferManager] Failed to send rejection message:', error);
+      }
+
+      // 关键改进：主动关闭连接，确保下次重新建立连接
+      try {
+        this.receiveConnection.close();
+        console.log('[FileTransferManager] Closed receive connection after rejection');
+      } catch (error) {
+        console.error('[FileTransferManager] Failed to close connection:', error);
+      }
+
+      // 从 P2PManager 中移除连接
+      if (peerId) {
+        p2pManager.closeConnection(peerId, 'incoming');
+      }
+
+      this.receiveConnection = null;
+    }
+
+    // 清理状态
+    this.waitingForReceiveConfirmation = false;
+    this.pendingReceiveMetadata = null;
+    this.pendingChunks = [];
+
+    eventBus.emit('transfer:rejected', { direction: 'receive' });
   }
 
   /**

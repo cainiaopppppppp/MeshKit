@@ -11,6 +11,7 @@ import { ENCRYPTION_METHODS, type EncryptionMethod } from '../utils/Encryption';
 export function StickyNotesPage() {
   const [roomId, setRoomId] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [userName, setUserName] = useState(() => {
     // 从 localStorage 读取保存的用户名
     return localStorage.getItem('sticky_notes_user_name') || '';
@@ -68,6 +69,16 @@ export function StickyNotesPage() {
 
     if (enableEncryption && !password.trim()) {
       alert('启用加密时必须设置密码');
+      return;
+    }
+
+    if (enableEncryption && password.length < 4) {
+      alert('密码至少需要4个字符');
+      return;
+    }
+
+    if (enableEncryption && password !== confirmPassword) {
+      alert('两次输入的密码不一致');
       return;
     }
 
@@ -386,31 +397,55 @@ export function StickyNotesPage() {
             {/* 密码和加密算法（加密时） */}
             {enableEncryption && (
               <>
-                <div className="relative">
-                  <select
-                    value={encryptionMethod}
-                    onChange={(e) => setEncryptionMethod(e.target.value as EncryptionMethod)}
-                    className="w-full px-4 py-3 pr-10 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white text-gray-900 appearance-none cursor-pointer transition-all"
-                  >
-                    {ENCRYPTION_METHODS.map((method) => (
-                      <option key={method.value} value={method.value}>
-                        {method.label}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-400">
-                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    加密算法
+                  </label>
+                  <div className="relative">
+                    <select
+                      value={encryptionMethod}
+                      onChange={(e) => setEncryptionMethod(e.target.value as EncryptionMethod)}
+                      className="w-full px-4 py-3 pr-10 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white text-gray-900 appearance-none cursor-pointer transition-all"
+                    >
+                      {ENCRYPTION_METHODS.map((method) => (
+                        <option key={method.value} value={method.value}>
+                          {method.label}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-400">
+                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
                   </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {ENCRYPTION_METHODS.find(m => m.value === encryptionMethod)?.description}
+                  </p>
                 </div>
 
                 <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    密码
+                  </label>
                   <input
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="加密密码"
+                    placeholder="请输入密码（至少4个字符）"
+                    className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    确认密码
+                  </label>
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="请再次输入密码"
                     className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                   />
                 </div>

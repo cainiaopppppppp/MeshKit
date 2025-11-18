@@ -5,12 +5,72 @@
 import { useState, useEffect } from 'react';
 import { useP2P } from '../hooks/useP2P';
 import { useAppStore } from '../store';
-import { deviceManager, fileTransferManager, eventBus } from '@meshkit/core';
+import {
+  deviceManager,
+  fileTransferManager,
+  eventBus,
+  updateDeviceName,
+  EncryptionMethod,
+  FileEncryptionHelper,
+  deviceBlockManager,
+  type BlockedDevice,
+} from '@meshkit/core';
 import { fileStorage } from '../utils/FileStorage';
 import { RoomModeSelector } from '../components/RoomModeSelector';
 import { RoomContainer } from '../components/RoomContainer';
 import { FileSelector } from '../components/FileSelector';
 import { FileQueue } from '../components/FileQueue';
+import { DeviceNameEditor } from '../components/DeviceNameEditor';
+import { PasswordDialog } from '../components/PasswordDialog';
+import { ReceiveRequestDialog } from '../components/ReceiveRequestDialog';
+import { FileListRequestDialog } from '../components/FileListRequestDialog';
+import { PasswordInputDialog } from '../components/PasswordInputDialog';
+import { BlockedDevicesList } from '../components/BlockedDevicesList';
+
+// 播放通知提示音
+const playNotificationSound = () => {
+  try {
+    const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBjOM0fPTgjMGHm7A7+OZSA0PVqzn77BdGAk+ltryxnMnBS2Hy/LaiTcIGWe77+WeTBEMUKfj8LZjHAY4kdfyzHksBSR3x/DdkEAKFF606+uoVRQKRp/g8r5sIQYzjNHz04IzBh5uwO/jmUgND1as5++wXRgJPpba8sZzJwUthsvy2ok3CBlnuu/lnkwRDFCn4/C2YxwGOJHX8sx5LAUkd8fw3ZBAC');
+    audio.volume = 0.3;
+    audio.play().catch(e => console.log('Failed to play sound:', e));
+  } catch (e) {
+    console.log('Sound not supported:', e);
+  }
+};
+
+// 显示浏览器通知
+const showBrowserNotification = (senderName: string, fileName: string, fileSize: number) => {
+  if (!('Notification' in window)) {
+    return;
+  }
+
+  const formatFileSize = (bytes: number) => {
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i];
+  };
+
+  if (Notification.permission === 'granted') {
+    new Notification('收到文件传输请求', {
+      body: `${senderName} 想要发送文件：${fileName} (${formatFileSize(fileSize)})`,
+      icon: '/favicon.ico',
+      tag: 'file-transfer',
+      requireInteraction: true,
+    });
+  } else if (Notification.permission !== 'denied') {
+    Notification.requestPermission().then(permission => {
+      if (permission === 'granted') {
+        new Notification('收到文件传输请求', {
+          body: `${senderName} 想要发送文件：${fileName} (${formatFileSize(fileSize)})`,
+          icon: '/favicon.ico',
+          tag: 'file-transfer',
+          requireInteraction: true,
+        });
+      }
+    });
+  }
+};
 
 export function FileTransferPage() {
   useP2P();
@@ -34,11 +94,53 @@ export function FileTransferPage() {
     setMode,
     selectDevice,
     setCurrentFile,
+    setMyDevice,
   } = useAppStore();
 
   const [dragOver, setDragOver] = useState(false);
   const [showFileSelector, setShowFileSelector] = useState(false);
-  const [pendingFileList, setPendingFileList] = useState<{ files: any[]; totalSize: number } | null>(null);
+  const [pendingFileList, setPendingFileList] = useState<{
+    files: any[];
+    totalSize: number;
+    passwordProtected?: boolean;
+    encrypted?: boolean;
+    encryptionMethod?: string;
+    verificationToken?: string;
+  } | null>(null);
+  const [showFileListRequestDialog, setShowFileListRequestDialog] = useState(false);
+  const [pendingFileListRequest, setPendingFileListRequest] = useState<{
+    senderName: string;
+    senderDeviceId: string;
+    fileCount: number;
+    totalSize: number;
+    passwordProtected?: boolean;
+    encrypted?: boolean;
+    encryptionMethod?: string;
+    verificationToken?: string;
+  } | null>(null);
+  const [showDeviceNameEditor, setShowDeviceNameEditor] = useState(false);
+  const [showQueuePasswordDialog, setShowQueuePasswordDialog] = useState(false);
+  const [showPasswordDialog, setShowPasswordDialog] = useState(false);
+  const [pendingSendDeviceId, setPendingSendDeviceId] = useState<string | null>(null);
+  const [showReceiveRequestDialog, setShowReceiveRequestDialog] = useState(false);
+  const [showPasswordInputDialog, setShowPasswordInputDialog] = useState(false);
+  const [pendingReceiveFile, setPendingReceiveFile] = useState<{
+    senderName: string;
+    senderDeviceId: string;
+    fileName: string;
+    fileSize: number;
+    fileType: string;
+    passwordProtected: boolean;
+    encrypted?: boolean;
+    encryptionMethod?: string;
+    verificationToken?: string;
+  } | null>(null);
+  const [blockedDevices, setBlockedDevices] = useState<BlockedDevice[]>([]);
+  // const [transferEncryptionConfig, setTransferEncryptionConfig] = useState<{
+  //   password: string | null;
+  //   enableEncryption: boolean;
+  //   encryptionMethod: EncryptionMethod;
+  // } | null>(null);
 
   // 处理文件选择（支持单文件和多文件）
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -177,27 +279,315 @@ export function FileTransferPage() {
       return;
     }
 
+    // 显示密码对话框，让用户选择是否加密
+    setPendingSendDeviceId(selectedDeviceId);
+    setShowPasswordDialog(true);
+  };
+
+  // 处理密码对话框确认
+  const handlePasswordConfirm = async (options: {
+    password: string | null;
+    enableEncryption: boolean;
+    encryptionMethod: EncryptionMethod;
+  }) => {
+    setShowPasswordDialog(false);
+
+    if (!pendingSendDeviceId) return;
+
     try {
       if (isQueueMode) {
-        // 多文件模式：发送文件列表
-        const success = await fileTransferManager.sendFileList(selectedDeviceId);
+        // 多文件模式：发送文件列表（包含加密配置）
+        console.log('[App] Sending queue with encryption:', options);
+        const success = await fileTransferManager.sendFileList(pendingSendDeviceId, {
+          password: options.password,
+          enableEncryption: options.enableEncryption,
+          encryptionMethod: options.encryptionMethod,
+        });
         if (!success) {
           alert('❌ 发送失败\n\n可能原因：\n1. 信令服务器连接断开\n2. 目标设备离线\n3. 网络连接问题\n\n建议：刷新页面重试');
         }
       } else {
-        // 单文件模式
-        await fileTransferManager.sendFile(selectedDeviceId);
+        // 单文件模式：将加密配置传递给 FileTransferManager
+        await fileTransferManager.sendFile(pendingSendDeviceId, {
+          password: options.password,
+          enableEncryption: options.enableEncryption,
+          encryptionMethod: options.encryptionMethod,
+        });
       }
     } catch (error) {
       console.error('[App] Send file error:', error);
       alert('❌ 发送失败：' + (error as Error).message);
+    } finally {
+      setPendingSendDeviceId(null);
     }
   };
 
+  // 处理密码对话框取消
+  const handlePasswordCancel = () => {
+    setShowPasswordDialog(false);
+    setPendingSendDeviceId(null);
+  };
+
+  // 第一步：处理用户点击接受（显示第一个对话框后）
+  const handleReceiveRequestAccept = () => {
+    if (!pendingReceiveFile) return;
+
+    // 关闭第一个对话框
+    setShowReceiveRequestDialog(false);
+
+    // 如果有密码保护或加密，显示密码输入对话框
+    if (pendingReceiveFile.passwordProtected || pendingReceiveFile.encrypted) {
+      setShowPasswordInputDialog(true);
+    } else {
+      // 没有密码，直接开始传输
+      startReceiving(null);
+    }
+  };
+
+  // 第一步：处理用户点击拒绝
+  const handleReceiveRequestReject = () => {
+    setShowReceiveRequestDialog(false);
+    setPendingReceiveFile(null);
+
+    // 拒绝接收
+    console.log('[App] File transfer rejected by user');
+    fileTransferManager.rejectReceive();
+  };
+
+  // 第一步：处理用户点击拒绝并屏蔽
+  const handleReceiveRequestRejectAndBlock = (durationMs: number) => {
+    if (!pendingReceiveFile) return;
+
+    // 屏蔽设备
+    deviceBlockManager.blockDevice(
+      pendingReceiveFile.senderDeviceId,
+      pendingReceiveFile.senderName,
+      durationMs
+    );
+
+    // 更新屏蔽列表
+    setBlockedDevices(deviceBlockManager.getBlockedDevices());
+
+    // 拒绝接收
+    setShowReceiveRequestDialog(false);
+    setPendingReceiveFile(null);
+    fileTransferManager.rejectReceive();
+
+    const minutes = Math.ceil(durationMs / 1000 / 60);
+    console.log(`[App] Device ${pendingReceiveFile.senderName} blocked for ${minutes} minutes`);
+    alert(`已屏蔽设备 ${pendingReceiveFile.senderName}，时长 ${minutes} 分钟`);
+  };
+
+  // 解除屏蔽设备
+  const handleUnblockDevice = (deviceId: string) => {
+    deviceBlockManager.unblockDevice(deviceId);
+    setBlockedDevices(deviceBlockManager.getBlockedDevices());
+    console.log(`[App] Device ${deviceId} unblocked`);
+  };
+
+  // 第二步：处理密码输入
+  const handlePasswordInput = async (password: string) => {
+    if (!pendingReceiveFile) return;
+
+    // 验证密码
+    if (pendingReceiveFile.verificationToken && pendingReceiveFile.encryptionMethod) {
+      try {
+        const encryptionHelper = new FileEncryptionHelper();
+        const isValid = await encryptionHelper.verifyPassword(
+          pendingReceiveFile.verificationToken,
+          password,
+          pendingReceiveFile.encryptionMethod as EncryptionMethod
+        );
+
+        if (!isValid) {
+          alert('❌ 密码错误\n\n请输入正确的密码');
+          return; // 不关闭对话框，让用户重新输入
+        }
+        console.log('[App] Password verified successfully');
+      } catch (error) {
+        console.error('[App] Password verification error:', error);
+        alert('❌ 密码验证失败\n\n请重试');
+        return;
+      }
+    }
+
+    // 密码验证通过，关闭对话框，开始传输
+    setShowPasswordInputDialog(false);
+    startReceiving(password);
+  };
+
+  // 第二步：处理取消密码输入
+  const handlePasswordInputCancel = () => {
+    setShowPasswordInputDialog(false);
+    setPendingReceiveFile(null);
+
+    // 取消接收
+    console.log('[App] Password input cancelled, rejecting transfer');
+    fileTransferManager.rejectReceive();
+  };
+
+  // 开始接收文件
+  const startReceiving = async (password: string | null) => {
+    // 设置解密密码
+    if (password) {
+      console.log('[App] Starting receive with password for decryption');
+      fileTransferManager.setReceivePassword(password);
+    } else {
+      console.log('[App] Starting receive without password');
+      fileTransferManager.setReceivePassword(null);
+    }
+
+    // 确认接收，开始传输
+    await fileTransferManager.confirmReceive();
+
+    // 清空状态
+    setPendingReceiveFile(null);
+  };
+
   // 处理接收到的文件列表
-  const handleFileListReceived = (files: any[], totalSize: number) => {
-    setPendingFileList({ files, totalSize });
-    setShowFileSelector(true);
+  const handleFileListReceived = (
+    files: any[],
+    totalSize: number,
+    senderDeviceId?: string,
+    senderDeviceName?: string,
+    encryptionInfo?: {
+      passwordProtected?: boolean;
+      encrypted?: boolean;
+      encryptionMethod?: string;
+      verificationToken?: string;
+    }
+  ) => {
+    // 保存完整的文件列表数据
+    const fileListData = {
+      files,
+      totalSize,
+      ...encryptionInfo,
+    };
+    setPendingFileList(fileListData);
+
+    // 使用发送者设备名，如果没有则尝试从设备列表查找，最后使用默认值
+    let senderName = senderDeviceName || '未知设备';
+    if (!senderDeviceName && senderDeviceId) {
+      const senderDevice = devices.find(d => d.id === senderDeviceId);
+      if (senderDevice) {
+        senderName = senderDevice.name;
+      }
+    }
+
+    // 检查设备是否被屏蔽
+    if (senderDeviceId && deviceBlockManager.isBlocked(senderDeviceId)) {
+      const remainingTime = deviceBlockManager.getRemainingTime(senderDeviceId);
+      console.log(`[FileTransferPage] Auto-rejected: device ${senderName} is blocked (${remainingTime}s remaining)`);
+
+      // 自动拒绝
+      fileTransferManager.rejectFileList();
+
+      // 显示通知
+      alert(`已自动拒绝来自 ${senderName} 的文件列表\n该设备已被屏蔽，剩余时间: ${Math.ceil(remainingTime / 60)} 分钟`);
+      return;
+    }
+
+    // 保存请求信息用于确认对话框
+    setPendingFileListRequest({
+      senderName,
+      senderDeviceId: senderDeviceId || '',
+      fileCount: files.length,
+      totalSize,
+      ...encryptionInfo,
+    });
+
+    // 显示确认对话框
+    setShowFileListRequestDialog(true);
+
+    // 播放提示音和显示浏览器通知
+    playNotificationSound();
+    showBrowserNotification(senderName, `${files.length} 个文件`, totalSize);
+  };
+
+  // 接受文件列表
+  const handleFileListAccept = () => {
+    setShowFileListRequestDialog(false);
+
+    if (!pendingFileList) return;
+
+    // 如果有密码保护，显示密码输入对话框
+    if (pendingFileList.passwordProtected) {
+      console.log('[App] Queue is password protected, showing password dialog');
+      setShowQueuePasswordDialog(true);
+    } else {
+      // 没有密码，直接显示文件选择器
+      setShowFileSelector(true);
+    }
+  };
+
+  // 拒绝文件列表
+  const handleFileListReject = () => {
+    setShowFileListRequestDialog(false);
+    setPendingFileListRequest(null);
+    setPendingFileList(null);
+
+    // 调用后端拒绝方法
+    fileTransferManager.rejectFileList();
+  };
+
+  // 拒绝并屏蔽设备
+  const handleFileListRejectAndBlock = (durationMs: number) => {
+    if (!pendingFileListRequest?.senderDeviceId) return;
+
+    deviceBlockManager.blockDevice(
+      pendingFileListRequest.senderDeviceId,
+      pendingFileListRequest.senderName,
+      durationMs
+    );
+    setBlockedDevices(deviceBlockManager.getBlockedDevices());
+
+    setShowFileListRequestDialog(false);
+    setPendingFileListRequest(null);
+    setPendingFileList(null);
+
+    // 调用后端拒绝方法
+    fileTransferManager.rejectFileList();
+  };
+
+  // 处理队列密码验证
+  const handleQueuePasswordInput = async (password: string) => {
+    if (!pendingFileList) return;
+
+    // 验证密码
+    if (pendingFileList.verificationToken && pendingFileList.encryptionMethod) {
+      try {
+        const encryptionHelper = new FileEncryptionHelper();
+        const isValid = await encryptionHelper.verifyPassword(
+          pendingFileList.verificationToken,
+          password,
+          pendingFileList.encryptionMethod as EncryptionMethod
+        );
+
+        if (!isValid) {
+          alert('❌ 密码错误，请重试');
+          return; // 保持对话框打开
+        }
+
+        console.log('[App] Queue password verified successfully');
+
+        // 保存密码到 FileTransferManager
+        fileTransferManager.setReceivePassword(password);
+
+        // 关闭密码对话框，显示文件选择器
+        setShowQueuePasswordDialog(false);
+        setShowFileSelector(true);
+      } catch (error) {
+        console.error('[App] Password verification failed:', error);
+        alert('❌ 密码验证失败：' + (error as Error).message);
+      }
+    }
+  };
+
+  // 处理队列密码对话框取消
+  const handleQueuePasswordCancel = () => {
+    setShowQueuePasswordDialog(false);
+    setPendingFileList(null);
+    fileTransferManager.fullReset();
   };
 
   // 确认接收文件选择
@@ -312,6 +702,25 @@ export function FileTransferPage() {
     selectDevice(deviceId);
   };
 
+  // 更新设备名
+  const handleUpdateDeviceName = (newName: string) => {
+    try {
+      const updatedName = updateDeviceName(newName);
+
+      // 更新localStorage
+      localStorage.setItem('meshkit_device_name', updatedName);
+
+      // 更新store
+      const deviceId = localStorage.getItem('meshkit_device_id') || '';
+      setMyDevice(deviceId, updatedName);
+
+      setShowDeviceNameEditor(false);
+    } catch (error) {
+      console.error('[App] Failed to update device name:', error);
+      alert('更新设备名失败：' + (error as Error).message);
+    }
+  };
+
   const formatFileSize = (bytes: number) => {
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
@@ -321,14 +730,118 @@ export function FileTransferPage() {
 
   // 监听文件列表接收事件
   useEffect(() => {
-    const handleFileListEvent = ({ files, totalSize }: any) => {
-      handleFileListReceived(files, totalSize);
+    const handleFileListEvent = ({
+      files,
+      totalSize,
+      senderDeviceId,
+      senderDeviceName,
+      passwordProtected,
+      encrypted,
+      encryptionMethod,
+      verificationToken,
+    }: any) => {
+      handleFileListReceived(files, totalSize, senderDeviceId, senderDeviceName, {
+        passwordProtected,
+        encrypted,
+        encryptionMethod,
+        verificationToken,
+      });
     };
 
     eventBus.on('transfer:file-list-received', handleFileListEvent);
 
     return () => {
       eventBus.off('transfer:file-list-received', handleFileListEvent);
+    };
+  }, [devices]);
+
+  // 加载被屏蔽设备列表
+  useEffect(() => {
+    const updateBlockedDevices = () => {
+      setBlockedDevices(deviceBlockManager.getBlockedDevices());
+    };
+
+    updateBlockedDevices();
+    const interval = setInterval(updateBlockedDevices, 5000); // 每5秒更新一次
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // 监听接收文件请求事件
+  useEffect(() => {
+    const handleReceiveRequest = ({
+      file,
+      senderDeviceId,
+      senderDeviceName,
+    }: {
+      file: any;
+      senderDeviceId?: string;
+      senderDeviceName?: string;
+    }) => {
+      // 使用发送者设备名，如果没有则尝试从设备列表查找，最后使用默认值
+      let senderName = senderDeviceName || '未知设备';
+      if (!senderDeviceName && senderDeviceId) {
+        const senderDevice = devices.find(d => d.id === senderDeviceId);
+        if (senderDevice) {
+          senderName = senderDevice.name;
+        }
+      }
+
+      // 检查设备是否被屏蔽
+      if (senderDeviceId && deviceBlockManager.isBlocked(senderDeviceId)) {
+        const remainingTime = deviceBlockManager.getRemainingTime(senderDeviceId);
+        console.log(`[FileTransferPage] Auto-rejected: device ${senderName} is blocked (${remainingTime}s remaining)`);
+
+        // 自动拒绝
+        fileTransferManager.rejectReceive();
+
+        // 显示通知
+        alert(`已自动拒绝来自 ${senderName} 的文件传输请求\n该设备已被屏蔽，剩余时间: ${Math.ceil(remainingTime / 60)} 分钟`);
+        return;
+      }
+
+      const pendingFile = {
+        senderName,
+        senderDeviceId: senderDeviceId || '',
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+        passwordProtected: file.passwordProtected || false,
+        encrypted: file.encrypted || false,
+        encryptionMethod: file.encryptionMethod,
+        verificationToken: file.verificationToken,
+      };
+
+      setPendingReceiveFile(pendingFile);
+      setShowReceiveRequestDialog(true);
+
+      // 播放提示音或显示通知
+      playNotificationSound();
+      showBrowserNotification(senderName, file.name, file.size);
+    };
+
+    eventBus.on('transfer:receive-request', handleReceiveRequest);
+
+    return () => {
+      eventBus.off('transfer:receive-request', handleReceiveRequest);
+    };
+  }, [devices]);
+
+  // 监听传输被拒绝事件
+  useEffect(() => {
+    const handleTransferRejected = ({ direction, message }: { direction: string; message?: string }) => {
+      if (direction === 'send') {
+        // 发送方：接收方拒绝了传输
+        const displayMessage = message || '接收方拒绝了文件传输';
+        alert(`❌ ${displayMessage}\n\n您可以重新发送文件。`);
+        console.log('[FileTransferPage] Transfer rejected:', displayMessage);
+      }
+    };
+
+    eventBus.on('transfer:rejected', handleTransferRejected);
+
+    return () => {
+      eventBus.off('transfer:rejected', handleTransferRejected);
     };
   }, []);
 
@@ -345,14 +858,97 @@ export function FileTransferPage() {
 
         {/* 设备名称 */}
         <div className="mb-6">
-          <input
-            type="text"
-            value={myDeviceName || ''}
-            readOnly
-            className="w-full px-4 py-3 border border-gray-200 rounded-lg bg-gray-50 text-sm focus:outline-none"
-            placeholder="设备名称"
-          />
+          <div className="relative">
+            <input
+              type="text"
+              value={myDeviceName || ''}
+              readOnly
+              className="w-full px-4 py-3 pr-12 border border-gray-200 rounded-lg bg-gray-50 text-sm focus:outline-none"
+              placeholder="设备名称"
+            />
+            <button
+              onClick={() => setShowDeviceNameEditor(true)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+              title="编辑设备名"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+              </svg>
+            </button>
+          </div>
         </div>
+
+        {/* 设备名编辑对话框 */}
+        {showDeviceNameEditor && (
+          <DeviceNameEditor
+            currentName={myDeviceName || ''}
+            onSave={handleUpdateDeviceName}
+            onCancel={() => setShowDeviceNameEditor(false)}
+          />
+        )}
+
+        {/* 屏蔽设备列表 */}
+        <BlockedDevicesList
+          blockedDevices={blockedDevices}
+          onUnblock={handleUnblockDevice}
+        />
+
+        {/* 密码对话框 */}
+        {showPasswordDialog && (
+          <PasswordDialog
+            onConfirm={handlePasswordConfirm}
+            onCancel={handlePasswordCancel}
+          />
+        )}
+
+        {/* 第一步：接收请求对话框（单文件） */}
+        {showReceiveRequestDialog && pendingReceiveFile && (
+          <ReceiveRequestDialog
+            senderName={pendingReceiveFile.senderName}
+            fileName={pendingReceiveFile.fileName}
+            fileSize={pendingReceiveFile.fileSize}
+            fileType={pendingReceiveFile.fileType}
+            passwordProtected={pendingReceiveFile.passwordProtected}
+            encrypted={pendingReceiveFile.encrypted}
+            encryptionMethod={pendingReceiveFile.encryptionMethod}
+            onAccept={handleReceiveRequestAccept}
+            onReject={handleReceiveRequestReject}
+            onRejectAndBlock={handleReceiveRequestRejectAndBlock}
+          />
+        )}
+
+        {/* 第一步：文件列表接收请求对话框（多文件） */}
+        {showFileListRequestDialog && pendingFileListRequest && (
+          <FileListRequestDialog
+            senderName={pendingFileListRequest.senderName}
+            fileCount={pendingFileListRequest.fileCount}
+            totalSize={pendingFileListRequest.totalSize}
+            passwordProtected={pendingFileListRequest.passwordProtected || false}
+            encrypted={pendingFileListRequest.encrypted}
+            encryptionMethod={pendingFileListRequest.encryptionMethod}
+            onAccept={handleFileListAccept}
+            onReject={handleFileListReject}
+            onRejectAndBlock={handleFileListRejectAndBlock}
+          />
+        )}
+
+        {/* 第二步：密码输入对话框（单文件） */}
+        {showPasswordInputDialog && pendingReceiveFile && (
+          <PasswordInputDialog
+            fileName={pendingReceiveFile.fileName}
+            onConfirm={handlePasswordInput}
+            onCancel={handlePasswordInputCancel}
+          />
+        )}
+
+        {/* 队列密码输入对话框（多文件） */}
+        {showQueuePasswordDialog && pendingFileList && (
+          <PasswordInputDialog
+            fileName={`${pendingFileList.files.length} 个文件`}
+            onConfirm={handleQueuePasswordInput}
+            onCancel={handleQueuePasswordCancel}
+          />
+        )}
 
         {/* 传输模式选择器 */}
         <div className="mb-6">
