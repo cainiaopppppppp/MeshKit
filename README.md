@@ -1,59 +1,170 @@
-# MeshKit - MeshDrop 文件快传
+# MeshKit - 安全的 P2P 协作工具套件
 
-基于WebRTC的P2P局域网文件传输系统，采用Monorepo架构，支持Web、桌面和移动端。
+<div align="center">
 
-MeshKit是一套局域网协作工具套件，MeshDrop是其中的文件快传模块。
+**基于 WebRTC 的去中心化 P2P 协作平台**
 
-## 🚀 快速启动（5步即可运行）
+ **端到端加密** • **文件传输** • **便签协作** • **加密聊天**
 
-```bash
-# 1. 安装依赖
-pnpm install
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue)](https://www.typescriptlang.org/)
+[![React](https://img.shields.io/badge/React-18.2-blue)](https://reactjs.org/)
+[![Electron](https://img.shields.io/badge/Electron-28.0-blue)](https://www.electronjs.org/)
+[![Security](https://img.shields.io/badge/Security-E2EE-green)](https://en.wikipedia.org/wiki/End-to-end_encryption)
 
-# 2. 构建核心包（⚠️ 首次必须执行）
-pnpm --filter @meshkit/core build
+[快速开始](#-快速开始) • [功能特性](#-核心功能) • [安全性](#-安全保障) • [文档](#-文档)
 
-# 3. 启动信令服务器（新开终端窗口）
-pnpm dev:signaling
+</div>
 
-# 4. 启动Web应用（再开一个终端窗口）
-pnpm dev:web
+---
 
-# 5. 浏览器访问 http://localhost:3000
+## 项目简介
+
+MeshKit 是一个**去中心化、端到端加密的 P2P 协作工具套件**，提供三大核心功能：
+
+- **文件传输** - 高速 P2P 文件传输（传输层加密），局域网内可达 20-50 MB/s
+- **便签墙** - 实时协同编辑的虚拟便签墙，支持多人协作
+- **加密聊天** - 端到端加密（E2EE）的即时通讯，军事级隐私保护
+
+### 为什么选择 MeshKit？
+
+- **端到端加密** - 采用 NaCl/libsodium 加密库，256位密钥，军事级加密强度
+- **完全去中心化** - 数据直接在设备间传输，永不经过第三方服务器
+- **隐私至上** - 聊天消息不保存，刷新即清空，零数据留痕
+- **传输层安全** - WebRTC 原生 DTLS/SRTP 加密，防窃听
+- **局域网优先** - 在同一网络内享受极速传输体验
+- **跨平台支持** - Web、Desktop (Electron)、Mobile (规划中)
+- **开源免费** - MIT 协议，完全开源，代码可审计
+
+## ️ 安全保障
+
+### 加密技术栈
+
+| 功能 | 加密方式 | 密钥长度 | 算法 |
+|------|---------|---------|------|
+| **文件传输** | WebRTC DTLS/SRTP | 128-256位 | AES-GCM |
+| **便签同步** | WebRTC 传输层加密 | 128-256位 | DTLS 1.2+ |
+| **加密聊天** | 端到端加密 (E2EE) | 256位 | NaCl/libsodium |
+
+### 密钥交换
+
+- **ECDH** (Elliptic Curve Diffie-Hellman) 密钥协商
+- **Curve25519** 椭圆曲线算法
+- **前向保密** - 每次会话生成新密钥
+- **自动化** - 无需手动交换密钥，连接时自动完成
+
+### ️ 隐私保护
+
+- **零服务器存储** - 所有数据仅在设备间传输
+- **消息即焚** - 聊天记录不保存，刷新页面自动清空
+- **本地存储** - 便签数据仅保存在浏览器本地 IndexedDB
+- **不留痕迹** - 无日志记录，无数据追踪
+- **可审计代码** - 开源代码，安全专家可审查
+
+
+
+## 核心功能
+
+### 1. 文件传输 (MeshDrop)
+
+基于 WebRTC 的 P2P 文件传输系统，**传输层自动加密**，支持大文件、多文件传输。
+
+**主要特性：**
+- **传输层加密** - WebRTC DTLS/SRTP 自动加密，防止中间人攻击和窃听
+- **极速传输** - 局域网内速度可达 20-50 MB/s
+- **大文件支持** - 支持 1GB+ 大文件，流式传输不占内存
+- **多文件队列** - 批量传输多个文件
+- **实时进度** - 精确显示传输进度、速度、剩余时间
+- ️ **安全可靠** - P2P 直连，数据不经过服务器，保护隐私
+- **断点续传** - 传输中断后自动恢复（规划中）
+- **跨平台** - 支持所有主流平台和浏览器
+
+**安全保证：**
+- WebRTC Data Channel 使用 DTLS 1.2+ 加密
+- 类似 HTTPS 的安全级别
+- 数据仅在设备间传输，不经过任何服务器
+- 防止网络窃听和中间人攻击
+
+**使用场景：**
+- 安全传输敏感文件（合同、账号信息等）
+- 局域网内快速分享文件（不需要U盘或云盘）
+- 手机与电脑之间传输照片、视频
+- 会议中快速分发文档、资料
+- 开发团队共享代码、构建产物
+
+### 2. 便签墙 (StickyNotes)
+
+基于 Yjs CRDT 的实时协同便签墙，**WebRTC 加密传输**，多人可同时编辑。
+
+**主要特性：**
+- **加密同步** - WebRTC 传输层加密，保护协作内容
+- **丰富的便签** - 支持多种颜色、样式
+- **多人协作** - 实时同步，支持多人同时编辑
+- **自动同步** - 基于 CRDT 算法，保证数据一致性
+- **拖拽排列** - 自由拖动便签位置
+- **本地存储** - 数据仅保存在浏览器本地 IndexedDB
+- **P2P 同步** - 无需服务器，设备间直接加密同步
+- ️ **隐私保护** - 便签数据不上传云端，完全掌控
+
+**安全保证：**
+- 所有同步数据通过 WebRTC 加密传输
+- 便签内容仅存储在本地设备
+- 无服务器存储，无数据泄露风险
+- 刷新页面后便签仍然保留（本地持久化）
+
+**使用场景：**
+- 敏感项目的团队头脑风暴、思维整理
+- 内部项目任务看板、待办事项
+- 课堂教学互动、私密笔记共享
+- 设计评审、创意收集（保护知识产权）
+
+### 3. 加密聊天 (EncryptedChat)
+
+**军事级端到端加密**的即时通讯，基于 **libsodium (NaCl)** 加密库。
+
+**主要特性：**
+- **端到端加密 (E2EE)** - 使用 NaCl/libsodium 加密算法，256位密钥
+- ️ **军事级加密** - Salsa20 流密码 + Poly1305 消息认证
+- **自动密钥交换** - ECDH (Curve25519) 密钥协商，无需手动配置
+- **即时通讯** - 基于 WebRTC Data Channel，低延迟
+- ️ **完全私密** - 消息仅在设备间传输，服务器无法解密
+- **富文本支持** - 支持文本格式、表情符号
+- **消息即焚** - 刷新页面后聊天记录自动清空
+- **消息通知** - 桌面通知提醒（规划中）
+
+**安全保证：**
+- **256位密钥** - 与军事、银行级别加密相同
+- **前向保密 (PFS)** - 每次会话生成新密钥，历史消息不会暴露
+- **防篡改** - Poly1305 消息认证码防止消息被修改
+- **防重放** - Nonce 机制防止重放攻击
+- **零日志** - 消息不保存，不上传，不留痕
+- **可审计** - 开源代码，加密实现可被安全专家审查
+
+**技术细节：**
+```
+加密算法: NaCl (Networking and Cryptography library)
+密钥交换: ECDH (Curve25519)
+对称加密: Salsa20 (256位密钥)
+消息认证: Poly1305-AES
+密钥长度: 256 bits (32 bytes)
 ```
 
-## ✨ 特性
+**使用场景：**
+- 企业内部保密通讯、商业机密讨论
+- 团队私密讨论、敏感项目沟通
+- 传递账号密码、API密钥等敏感信息
+- 律师、医生等隐私要求高的职业
+- 隐私意识强的个人用户
 
-- ⚡ **极速传输** - P2P直连，局域网内传输速度可达20-50 MB/s
-- 🔒 **安全私密** - 数据仅在局域网内传输，不经过互联网
-- 📦 **Monorepo架构** - 代码复用最大化
-- 🎯 **TypeScript** - 完整的类型安全
-- 🌐 **多平台支持** - Web、Desktop（Electron）、Mobile（React Native）
-- 📱 **完美兼容** - 支持iOS、Android、Mac、Windows、Linux
-
-## 📦 项目结构
-
-```
-p2p_claude/
-├── packages/
-│   ├── core/          ✅ 核心逻辑包（跨平台共享）
-│   ├── web/           ✅ React Web应用
-│   ├── desktop/       ⏳ Electron桌面应用（待实现）
-│   └── mobile/        ⏳ React Native移动应用（待实现）
-├── apps/
-│   └── signaling/     ✅ 信令服务器
-└── docs/              📚 文档
-```
-
-## 🚀 快速开始
+## 快速开始
 
 ### 前置要求
 
-- Node.js >= 18
-- pnpm >= 8
+- **Node.js** >= 18
+- **pnpm** >= 8
 
 ```bash
-# 安装pnpm
+# 安装 pnpm
 npm install -g pnpm
 ```
 
@@ -61,174 +172,240 @@ npm install -g pnpm
 
 ```bash
 # 1. 克隆项目
-git clone <repository-url>
-cd p2p_claude
+git clone https://github.com/cainiaopppppppp/MeshKit.git
+cd MeshKit
 
 # 2. 安装所有依赖
 pnpm install
-```
 
-### ⚠️ 首次使用必看
-
-**第一次运行前，必须先构建 Core 包！**
-
-```bash
-# 构建核心包（必须先执行）
+# 3. 构建核心包（️ 首次必须执行）
 pnpm --filter @meshkit/core build
 ```
 
-> **为什么需要这步？**
-> `@meshkit/core` 是 TypeScript 编写的核心包，需要编译成 JavaScript 后才能被 Web 应用使用。
-> 构建后会生成 `packages/core/dist/` 目录，包含编译后的 JS 文件和类型定义。
+### 启动开发环境
 
-### 开发
-
-#### 方式一：完整启动（推荐新手）
+**方式一：同时启动所有服务（推荐）**
 
 ```bash
-# 一次性构建所有包（包括Core）
-pnpm build
+# 一键启动信令服务器 + Web 应用
+pnpm dev
+```
 
-# 然后启动信令服务器（终端1）
+**方式二：分别启动（适合调试）**
+
+```bash
+# 终端 1 - 启动信令服务器
 pnpm dev:signaling
 
-# 启动Web应用（终端2）
+# 终端 2 - 启动 Web 应用
 pnpm dev:web
+
+# 终端 3 - 启动 Desktop 应用（可选）
+cd packages/desktop
+pnpm dev
 ```
 
-#### 方式二：分步启动（推荐开发者）
+### 访问应用
 
-**终端 1 - 启动信令服务器：**
-```bash
-pnpm dev:signaling
-```
+- **Web 版**: http://localhost:3000
+- **Desktop 版**: 自动启动 Electron 窗口
 
-服务器会显示访问地址，例如：`ws://192.168.1.100:8000`
+### 在其他设备访问
 
-**终端 2 - 启动 Web 应用：**
-```bash
-pnpm dev:web
-```
-
-浏览器会自动打开 `http://localhost:3000`
-
-> 💡 **提示**：如果修改了 Core 包的代码，需要重新构建：`pnpm --filter @meshkit/core build`
-
-#### 3. 在其他设备上访问
-
-在同一WiFi下的其他设备（手机、平板）上，使用浏览器访问：
+在同一局域网（WiFi）下的其他设备上访问：
 
 ```
 http://[你的电脑IP]:3000
 ```
 
-## 📖 使用说明
+查看本机 IP：
+- Windows: `ipconfig`
+- Mac/Linux: `ifconfig` 或 `ip addr`
 
-### Web版使用
+## 项目结构
 
-1. **发送文件**
-   - 打开Web应用
-   - 切换到"📤 发送"模式
-   - 点击或拖拽文件到选择区域
-   - 选择目标设备
-   - 点击"发送文件"
-
-2. **接收文件**
-   - 打开Web应用
-   - 切换到"📥 接收"模式
-   - 等待其他设备发送文件
-   - 接收完成后点击"下载文件"
-
-### iOS Safari 特别说明
-
-由于iOS Safari的限制，下载文件需要：
-1. 点击"下载文件"按钮
-2. 在新打开的页面中**长按**文件
-3. 选择"存储到文件"
-4. 选择保存位置（如iCloud云盘）
-
-## 🏗️ 技术栈
-
-### Core包
-- TypeScript
-- PeerJS (WebRTC封装)
-- EventEmitter3
-- tsup (构建工具)
-
-### Web应用
-- React 18
-- TypeScript
-- Vite
-- Zustand (状态管理)
-- Tailwind CSS
-
-### 信令服务器
-- Node.js
-- WebSocket (ws库)
-
-## 📚 核心API
-
-### 初始化
-
-```typescript
-import { initCore, connectSignaling } from '@meshkit/core';
-
-// 初始化核心模块
-const { deviceId, deviceName } = await initCore();
-
-// 连接信令服务器
-connectSignaling('ws://localhost:8000');
 ```
+MeshKit/
+├── packages/
+│ ├── core/ # 核心逻辑包（P2P、文件传输、CRDT同步）
+│ ├── web/ # React Web 应用
+│ ├── desktop/ # Electron 桌面应用
+│ └── mobile/ # ⏳ React Native 移动应用（规划中）
+├── apps/
+│ └── signaling/ # WebSocket 信令服务器
+├── docs/ # 文档
+└── package.json # 根配置
+```
+
+### 包说明
+
+#### `@meshkit/core`
+核心业务逻辑包，包含：
+- P2P 连接管理（PeerJS + WebRTC）
+- 文件传输管理器
+- CRDT 同步（Yjs）
+- 加密通讯（libsodium）
+- 设备发现与管理
+- 事件总线
+
+#### `@meshkit/web`
+React Web 应用，包含：
+- 文件传输页面
+- 便签墙页面
+- 加密聊天页面
+- 设置页面
+- UI 组件库
+
+#### `@meshkit/desktop`
+Electron 桌面应用，包含：
+- 主进程（窗口管理、系统集成）
+- 预加载脚本（IPC 桥接）
+- 渲染进程（复用 Web 组件）
+
+#### `signaling`
+WebSocket 信令服务器：
+- 设备注册与发现
+- 心跳与健康检查
+- P2P 连接协商
+
+## ️ 技术架构
+
+### 核心技术栈
+
+| 技术 | 用途 | 说明 |
+|------|------|------|
+| **TypeScript** | 类型安全 | 全栈 TypeScript，完整类型定义 |
+| **React 18** | UI 框架 | Web 和 Desktop 渲染层 |
+| **Electron** | 桌面应用 | 跨平台桌面应用框架 |
+| **PeerJS** | WebRTC 封装 | 简化 P2P 连接建立 |
+| **Yjs** | CRDT 同步 | 实时协同编辑数据结构 |
+| **libsodium** | 加密库 | 端到端加密通讯 |
+| **WebSocket** | 信令通道 | 设备发现与连接协商 |
+| **Zustand** | 状态管理 | 轻量级 React 状态管理 |
+| **Vite** | 构建工具 | 快速的开发和构建 |
+| **pnpm** | 包管理 | Monorepo 工作空间管理 |
+| **Turborepo** | 构建系统 | 高效的 Monorepo 构建 |
+
+### 架构图
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Client Devices │
+│ ┌──────────┐ ┌──────────┐ ┌──────────┐ │
+│ │ Web │ │ Desktop │ │ Mobile │ │
+│ │ Browser │ │ Electron │ │React Nat.│ │
+│ └────┬─────┘ └────┬─────┘ └────┬─────┘ │
+│ │ │ │ │
+│ └─────────────┴──────────────┘ │
+│ │ │
+│ @meshkit/core │
+│ ┌──────────────┼──────────────┐ │
+│ │ │ │ │
+│ ┌────▼────┐ ┌─────▼──────┐ ┌────▼─────┐ │
+│ │P2P Mgr. │ │File Trans. │ │CRDT Sync │ │
+│ │(PeerJS) │ │(WebRTC DC) │ │ (Yjs) │ │
+│ └────┬────┘ └─────┬──────┘ └────┬─────┘ │
+└───────┼─────────────┼──────────────┼──────────────────┘
+ │ │ │
+ │ ┌────────▼──────────┐ │
+ └────► Signaling Server ◄────┘
+ │ (WebSocket) │
+ └───────────────────┘
+
+ ┌─────────────────────────┐
+ │ WebRTC P2P Channel │
+ │ ┌────┐ ┌────┐ │
+ │ │Dev1│◄────────►│Dev2│ │
+ │ └────┘ └────┘ │
+ │ Direct Connection │
+ └─────────────────────────┘
+```
+
+## 使用指南
 
 ### 文件传输
 
-```typescript
-import {
-  fileTransferManager,
-  deviceManager,
-  eventBus,
-} from '@meshkit/core';
+1. **发送文件**
+ ```
+ 打开 Web/Desktop 应用
+ → 选择"文件传输"标签
+ → 切换到"发送"模式
+ → 选择或拖拽文件
+ → 选择目标设备
+ → 点击"发送文件"
+ ```
 
-// 选择文件
-const file = document.getElementById('fileInput').files[0];
-fileTransferManager.selectFile(file);
+2. **接收文件**
+ ```
+ 打开应用
+ → 选择"文件传输"标签
+ → 切换到"接收"模式
+ → 等待接收
+ → 完成后点击"下载文件"
+ ```
 
-// 选择目标设备
-deviceManager.selectDevice(targetDeviceId);
+### 便签墙
 
-// 发送文件
-await fileTransferManager.sendFile(targetDeviceId);
+1. **创建便签**
+ ```
+ 打开"便签墙"标签
+ → 点击"+ 添加便签"
+ → 输入内容
+ → 选择颜色
+ ```
 
-// 监听进度
-eventBus.on('transfer:progress', (progress) => {
-  console.log(`进度: ${progress.progress}%`);
-  console.log(`速度: ${progress.speedMB} MB/s`);
-});
+2. **协作编辑**
+ ```
+ 多个设备打开便签墙
+ → 自动 P2P 同步
+ → 任意设备编辑都会实时同步
+ ```
 
-// 下载接收的文件
-fileTransferManager.downloadFile();
+### 加密聊天
+
+1. **发起聊天**
+ ```
+ 打开"加密聊天"标签
+ → 选择聊天对象
+ → 输入消息
+ → 发送（端到端加密）
+ ```
+
+2. **密钥管理**
+ ```
+ 首次连接会自动交换密钥
+ → 使用 ECDH 密钥协商
+ → 所有消息自动加密
+ ```
+
+### 设置
+
+```
+点击右上角️图标
+→ 配置信令服务器地址
+→ 保存并重启/刷新
 ```
 
-## 🔧 开发命令
+适用于局域网部署场景。
+
+## 开发指南
+
+### 开发命令
 
 ```bash
-# 构建Core包（首次必须执行）
+# 构建核心包（首次必须执行）
 pnpm --filter @meshkit/core build
 
 # 构建所有包
 pnpm build
 
-# 开发所有包（并行）
+# 启动所有服务
 pnpm dev
 
-# 只开发Web应用
-pnpm dev:web
-
-# 只开发信令服务器
-pnpm dev:signaling
-
-# 构建Web应用
-pnpm build:web
+# 分别启动
+pnpm dev:signaling # 信令服务器
+pnpm dev:web # Web 应用
+pnpm dev:desktop # Desktop 应用
 
 # 类型检查
 pnpm type-check
@@ -237,133 +414,226 @@ pnpm type-check
 pnpm clean
 ```
 
-## ❓ 常见问题
+### Desktop 应用打包
 
-### 1. 启动 Web 应用时报错：`Failed to resolve entry for package "@meshkit/core"`
+```bash
+cd packages/desktop
 
-**原因**：Core 包没有构建，缺少 dist 目录。
+# 打包当前平台
+pnpm release
 
-**解决方法**：
+# 打包特定平台
+pnpm release:win # Windows
+pnpm release:mac # macOS
+pnpm release:linux # Linux
+```
+
+详见 [Desktop 打包文档](./packages/desktop/BUILD.md)
+
+### 项目配置
+
+#### 修改端口
+
+**信令服务器端口**（`apps/signaling/src/index.ts`）：
+```typescript
+const WS_PORT = 7000; // WebSocket 端口
+const PEER_PORT = 8000; // PeerJS 端口
+```
+
+**Web 应用端口**（`packages/web/vite.config.ts`）：
+```typescript
+server: {
+ port: 3000
+}
+```
+
+#### 配置信令服务器
+
+在设置页面配置信令服务器地址，支持：
+- localhost（默认，本地开发）
+- 局域网 IP（如 192.168.1.100）
+- 域名（部署到公网）
+
+## 部署指南
+
+### 部署信令服务器
+
+#### Docker 部署（推荐）
+
+```bash
+# 构建镜像
+docker build -t meshkit-signaling -f apps/signaling/Dockerfile .
+
+# 运行容器
+docker run -d \
+ -p 7000:7000 \
+ -p 8000:8000 \
+ --name meshkit-signaling \
+ meshkit-signaling
+```
+
+#### PM2 部署
+
+```bash
+# 安装 PM2
+npm install -g pm2
+
+# 启动服务
+cd apps/signaling
+pm2 start npm --name "meshkit-signaling" -- start
+
+# 查看状态
+pm2 list
+pm2 logs meshkit-signaling
+```
+
+### 部署 Web 应用
+
+#### 静态部署
+
+```bash
+# 构建
+pnpm build:web
+
+# 部署 packages/web/dist/ 目录到任意静态托管服务
+# - Nginx
+# - Vercel
+# - Netlify
+# - GitHub Pages
+```
+
+#### Nginx 配置示例
+
+```nginx
+server {
+ listen 80;
+ server_name meshkit.example.com;
+ root /var/www/meshkit;
+ index index.html;
+
+ location / {
+ try_files $uri $uri/ /index.html;
+ }
+}
+```
+
+详见 [部署文档](./docs/DEPLOYMENT.md)
+
+## 文档
+
+- **[功能详解](./docs/FEATURES.md)** - 三大功能详细说明
+- **[架构设计](./docs/ARCHITECTURE.md)** - 技术架构和设计决策
+- **[开发指南](./docs/DEVELOPMENT.md)** - 贡献代码指南
+- **[API 文档](./docs/API.md)** - Core 包 API 参考
+- **[部署指南](./docs/DEPLOYMENT.md)** - 生产环境部署
+- **[Desktop 打包](./packages/desktop/BUILD.md)** - Electron 应用打包
+
+## 常见问题
+
+### 1. 启动时报错：`Failed to resolve entry for package "@meshkit/core"`
+
+**原因**：Core 包未构建
+
+**解决**：
 ```bash
 pnpm --filter @meshkit/core build
 ```
 
-### 2. 设备列表为空，看不到其他设备
-
-**原因**：
-- 信令服务器没有启动
-- 设备不在同一局域网
-- 防火墙阻止了 WebSocket 连接
-
-**解决方法**：
-1. 确保信令服务器正在运行：`pnpm dev:signaling`
-2. 确保所有设备连接到同一 WiFi
-3. 检查防火墙设置，允许端口 8000 和 3000
-
-### 3. iOS Safari 无法下载文件
-
-**原因**：iOS Safari 的安全限制。
-
-**解决方法**：
-1. 点击"下载文件"后，会打开新标签页
-2. **长按**图片/文件
-3. 选择"存储到文件"或"添加到照片"
-4. 选择保存位置
-
-### 4. 传输速度很慢
+### 2. 设备列表为空
 
 **可能原因**：
-- WiFi 信号弱
-- 使用了 5GHz 和 2.4GHz 混合连接
-- 路由器性能限制
+- 信令服务器未启动
+- 设备不在同一局域网
+- 防火墙阻止连接
 
-**解决方法**：
-- 确保设备距离路由器较近
-- 使用同一频段的 WiFi（都用 5GHz 或都用 2.4GHz）
-- 减少其他设备的网络占用
+**解决**：
+1. 确保信令服务器运行：`pnpm dev:signaling`
+2. 检查所有设备在同一 WiFi
+3. 检查防火墙设置
 
-### 5. Windows 系统下 pnpm 命令不可用
+### 3. 文件传输速度慢
 
-**解决方法**：
-```bash
-# 全局安装 pnpm
-npm install -g pnpm
+**优化建议**：
+- 使用 5GHz WiFi（比 2.4GHz 快）
+- 靠近路由器
+- 减少其他设备网络占用
+- 使用有线连接
 
-# 验证安装
-pnpm --version
-```
+### 4. iOS Safari 无法下载文件
 
-### 6. 修改了 Core 包代码后，Web 应用没有更新
+**解决**：
+1. 点击"下载文件"
+2. **长按**打开的文件
+3. 选择"存储到文件"
+4. 选择保存位置
 
-**原因**：需要重新构建 Core 包。
+### 5. 便签墙同步延迟
 
-**解决方法**：
-```bash
-# 重新构建 Core 包
-pnpm --filter @meshkit/core build
+**原因**：WebRTC 连接质量
 
-# 或者使用 watch 模式（自动重新构建）
-pnpm --filter @meshkit/core dev
-```
+**优化**：
+- 确保良好的网络连接
+- 减少同时连接的设备数量
+- 检查是否有网络代理
 
-### 7. 大文件（1GB+）传输失败或缓慢
+### 6. 加密聊天无法连接
 
-**已修复**！现在系统已优化支持大文件：
+**检查**：
+- 是否完成密钥交换
+- P2P 连接是否建立
+- 查看控制台错误信息
 
-**优化内容**：
-- ✅ 流式读取文件，避免内存溢出
-- ✅ 智能背压控制，防止缓冲区溢出
-- ✅ 增大chunk大小至1MB，提高效率
-- ✅ 5分钟传输超时，支持大文件
-- ✅ 内存自动清理
+## 路线图
 
-**性能**：
-- 支持文件大小：**无限制**（理论上）
-- 测试通过：200MB ✅, 1GB+ ✅
-- 传输速度：20-50 MB/s（局域网）
-- 内存占用：低（流式处理）
+### v1.0（当前版本）
+- 文件传输
+- 便签墙
+- 加密聊天
+- Desktop 应用
+- 设置页面
 
-## 🌟 功能特性
+### v1.1（规划中）
+- ⏳ 断点续传
+- ⏳ 文件加密传输
+- ⏳ 消息通知
+- ⏳ 主题切换
+- ⏳ 国际化支持
 
-### 已实现 ✅
-- P2P连接管理
-- **大文件支持** - 优化的流式传输，支持1GB+文件
-- 文件分块传输（1MB chunks，智能背压控制）
-- 实时进度显示
-- 速度和剩余时间计算
-- 设备自动发现
-- 心跳和重连机制
-- 超时和错误处理
-- 内存优化（流式读取，避免溢出）
-- iOS Safari兼容
-- 响应式UI
+### v2.0（未来）
+- ⏳ React Native 移动应用
+- ⏳ 视频通话
+- ⏳ 屏幕共享
+- ⏳ 语音消息
+- ⏳ 云同步（可选）
 
-### 计划中 ⏳
-- 多文件批量传输
-- 文件加密传输
-- 压缩传输
-- 聊天功能
-- 剪贴板共享
-- Electron桌面应用
-- React Native移动应用
+## 贡献
 
-## 🎯 性能
+欢迎贡献代码！请阅读 [贡献指南](./CONTRIBUTING.md)
 
-- **传输速度**: 20-50 MB/s (良好WiFi)
-- **分块大小**: 256KB
-- **延迟**: <1ms (局域网)
+1. Fork 本仓库
+2. 创建功能分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 开启 Pull Request
 
-## 📄 文档
+## 许可证
 
-- [架构设计](./ARCHITECTURE.md) - 详细的架构说明
-- [快速开始](./GETTING_STARTED.md) - 开发指南
-- [Core包文档](./packages/core/README.md) - 核心包API
-- [跨平台使用指南](./CROSS_PLATFORM_GUIDE.md) - 各平台使用说明
+本项目采用 MIT 许可证 - 详见 [LICENSE](./LICENSE) 文件
 
-## 📝 许可证
+## 致谢
 
-MIT License
+- [PeerJS](https://peerjs.com/) - WebRTC 封装库
+- [Yjs](https://yjs.dev/) - CRDT 协同编辑
+- [libsodium](https://libsodium.gitbook.io/) - 加密库
+- [React](https://reactjs.org/) - UI 框架
+- [Electron](https://www.electronjs.org/) - 桌面应用框架
 
 ---
 
-**Made with ❤️ for seamless P2P file transfer**
+<div align="center">
+
+**Made with ️ for seamless P2P collaboration**
+
+[GitHub](https://github.com/cainiaopppppppp/MeshKit) • [Issues](https://github.com/cainiaopppppppp/MeshKit/issues) • [Discussions](https://github.com/cainiaopppppppp/MeshKit/discussions)
+
+</div>

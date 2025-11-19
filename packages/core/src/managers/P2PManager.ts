@@ -38,6 +38,7 @@ export class P2PManager {
       // 创建Peer实例
       const webrtcConfig = config.get('webrtc');
       const peerjsConfig = config.get('peerjs');
+      const signalingConfig = config.get('signalingServer');
 
       // 根据配置选择PeerJS服务器
       const peerOptions: any = {
@@ -45,22 +46,30 @@ export class P2PManager {
         debug: peerjsConfig?.debug ?? 2,
       };
 
-      // 动态获取当前访问的hostname（支持IP变动）
-      if (peerjsConfig?.port && typeof window !== 'undefined') {
-        // 使用当前访问的hostname（就像WebSocket那样）
+      // 优先级1: 使用用户配置的信令服务器地址
+      if (signalingConfig?.host && signalingConfig?.peerPort) {
+        console.log('[P2PManager] Using configured signaling server:', `${signalingConfig.host}:${signalingConfig.peerPort}`);
+        peerOptions.host = signalingConfig.host;
+        peerOptions.port = signalingConfig.peerPort;
+        peerOptions.path = peerjsConfig?.path || '/peerjs';
+      }
+      // 优先级2: 动态获取当前访问的hostname（浏览器环境）
+      else if (peerjsConfig?.port && typeof window !== 'undefined') {
         const hostname = window.location.hostname;
         console.log('[P2PManager] Using local PeerJS server:', `${hostname}:${peerjsConfig.port}`);
         peerOptions.host = hostname;
         peerOptions.port = peerjsConfig.port;
         peerOptions.path = peerjsConfig.path || '/';
-      } else if (peerjsConfig?.host) {
-        // 降级：使用配置文件中的固定host
+      }
+      // 优先级3: 使用配置文件中的固定host（兼容旧配置）
+      else if (peerjsConfig?.host) {
         console.log('[P2PManager] Using configured PeerJS server:', `${peerjsConfig.host}:${peerjsConfig.port}`);
         peerOptions.host = peerjsConfig.host;
         peerOptions.port = peerjsConfig.port;
         peerOptions.path = peerjsConfig.path;
-      } else {
-        // 使用默认公共服务器
+      }
+      // 优先级4: 使用默认公共服务器
+      else {
         console.log('[P2PManager] Creating Peer with default PeerJS server...');
         console.log('[P2PManager] ⚠️  Note: Using public PeerJS server (may be slow in China)');
       }

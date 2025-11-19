@@ -1,0 +1,178 @@
+{
+  "name": "@meshkit/desktop",
+  "version": "1.0.0",
+  "description": "MeshKit 桌面应用 - Electron",
+  "main": "dist/main/main.js",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "dev": "concurrently \"pnpm dev:renderer\" \"pnpm dev:electron\"",
+    "dev:electron": "pnpm build:main && pnpm build:preload && electron --inspect=5858 .",
+    "dev:renderer": "vite",
+    "watch:main": "tsc -p tsconfig.main.json --watch",
+    "watch:preload": "tsc -p tsconfig.preload.json --watch",
+    "build": "pnpm build:main && pnpm build:preload && pnpm build:renderer",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:preload": "tsc -p tsconfig.preload.json",
+    "build:renderer": "vite build",
+    "prebuild": "pnpm clean",
+    "postinstall": "electron-builder install-app-deps",
+    "package": "pnpm build && electron-builder --dir",
+    "release": "pnpm build && electron-builder",
+    "release:win": "pnpm build && electron-builder --win",
+    "release:mac": "pnpm build && electron-builder --mac",
+    "release:linux": "pnpm build && electron-builder --linux",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux",
+    "type-check": "tsc --noEmit",
+    "clean": "rm -rf dist release"
+  },
+  "dependencies": {
+    "@meshkit/core": "workspace:*",
+    "electron-updater": "^6.1.7",
+    "fs-extra": "^11.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.16",
+    "concurrently": "^8.2.2",
+    "crypto-js": "^4.2.0",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1",
+    "idb": "^8.0.3",
+    "libsodium-wrappers": "^0.7.15",
+    "peerjs": "^1.5.2",
+    "postcss": "^8.4.32",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^7.9.5",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.8",
+    "vite-plugin-electron": "^0.28.0",
+    "y-webrtc": "^10.3.0",
+    "yjs": "^13.6.27",
+    "zustand": "^4.4.7"
+  },
+  "build": {
+    "appId": "com.meshkit.desktop",
+    "productName": "MeshKit",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/fs-extra/**/*",
+      "node_modules/universalify/**/*",
+      "node_modules/graceful-fs/**/*",
+      "node_modules/jsonfile/**/*"
+    ],
+    "npmRebuild": false,
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "extraMetadata": {
+      "main": "dist/main/main.js"
+    },
+    "files": [
+      "dist/**/*",
+      "node_modules/**/*",
+      "!node_modules/.cache/**/*",
+      "!node_modules/.bin/**/*",
+      "!node_modules/**/*.{md,markdown}",
+      "!node_modules/**/LICENSE*",
+      "!node_modules/**/*.map",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "icon": "build/icon.icns"
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64", "ia32"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "MeshKit",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "deb",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "rpm",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "category": "Utility",
+      "icon": "build/icon.png",
+      "maintainer": "MeshKit Team",
+      "vendor": "MeshKit",
+      "synopsis": "P2P 协作工具套件",
+      "description": "MeshKit 是一个去中心化的 P2P 协作工具套件，支持文件传输、便签墙和加密聊天"
+    }
+  }
+}
