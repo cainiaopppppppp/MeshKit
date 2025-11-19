@@ -584,15 +584,31 @@ setInterval(() => {
 function getLocalIP() {
   const os = require('os');
   const interfaces = os.networkInterfaces();
+  const addresses = [];
 
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name]) {
       // 跳过内部和非IPv4地址
       if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address;
+        addresses.push(iface.address);
       }
     }
   }
+
+  // 优先返回常见的局域网地址段（192.168.x.x 或 10.x.x.x）
+  const lanAddress = addresses.find(addr =>
+    addr.startsWith('192.168.') || addr.startsWith('10.')
+  );
+
+  if (lanAddress) {
+    return lanAddress;
+  }
+
+  // 其次返回其他地址
+  if (addresses.length > 0) {
+    return addresses[0];
+  }
+
   return '127.0.0.1';
 }
 

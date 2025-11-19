@@ -7,11 +7,10 @@ import {
   connectSignaling,
   eventBus,
   fileTransferManager,
+  config,
 } from '@meshkit/core';
 import { useAppStore } from '../store';
 import { fileStorage } from '../utils/FileStorage';
-
-const SIGNALING_URL = `ws://${window.location.hostname}:7000/ws`;
 
 // localStorage keys
 const STORAGE_KEYS = {
@@ -166,6 +165,18 @@ export function useP2P() {
     // 初始化
     const initialize = async () => {
       try {
+        // 从 localStorage 加载信令服务器配置
+        try {
+          const savedConfig = localStorage.getItem('meshkit_signaling_config');
+          if (savedConfig) {
+            const parsedConfig = JSON.parse(savedConfig);
+            config.set('signalingServer', parsedConfig);
+            console.log('[useP2P] Loaded signaling config from localStorage:', parsedConfig);
+          }
+        } catch (error) {
+          console.warn('[useP2P] Failed to load signaling config:', error);
+        }
+
         // 初始化文件存储
         await fileStorage.init();
         console.log('[useP2P] File storage initialized');
@@ -190,8 +201,10 @@ export function useP2P() {
 
         setMyDevice(deviceId, deviceName);
 
-        // 连接信令服务器
-        connectSignaling(SIGNALING_URL);
+        // 连接信令服务器 - 使用配置的地址
+        const signalingURL = config.getSignalingURL();
+        console.log('[useP2P] Connecting to signaling server:', signalingURL);
+        connectSignaling(signalingURL);
 
         // 清理7天前的旧文件
         fileStorage.cleanupOldFiles(7).catch(console.error);

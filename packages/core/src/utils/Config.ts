@@ -28,6 +28,12 @@ class Config {
         debug: 2, // 调试级别
         // 如果想用公共服务器，注释掉port和path即可
       },
+      // 信令服务器配置 - 用户可自定义
+      signalingServer: {
+        host: 'localhost',  // 默认本地，用户可在设置中修改
+        wsPort: 7000,  // WebSocket 信令端口
+        peerPort: 8000,  // PeerJS 端口
+      },
       transfer: {
         chunkSize: 1024 * 1024, // 1MB (优化大文件传输)
         sendDelay: 0,
@@ -135,6 +141,25 @@ class Config {
    */
   import(config: P2PConfig): void {
     this.config = JSON.parse(JSON.stringify(config));
+  }
+
+  /**
+   * 获取信令服务器 WebSocket URL
+   */
+  getSignalingURL(): string {
+    const signalingConfig = this.get('signalingServer');
+
+    if (signalingConfig?.host && signalingConfig?.wsPort) {
+      return `ws://${signalingConfig.host}:${signalingConfig.wsPort}/ws`;
+    }
+
+    // 降级：使用 window.location.hostname (浏览器环境)
+    if (typeof window !== 'undefined') {
+      return `ws://${window.location.hostname}:7000/ws`;
+    }
+
+    // 默认值
+    return 'ws://localhost:7000/ws';
   }
 }
 

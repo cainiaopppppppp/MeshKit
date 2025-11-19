@@ -92,6 +92,12 @@ export interface P2PConfig {
     path?: string;
     debug?: number;
   };
+  // 信令服务器配置
+  signalingServer?: {
+    host?: string;  // WebSocket 信令服务器地址
+    wsPort?: number;  // WebSocket 端口（默认 7000）
+    peerPort?: number;  // PeerJS 端口（默认 8000）
+  };
   transfer: {
     chunkSize: number;
     sendDelay: number;

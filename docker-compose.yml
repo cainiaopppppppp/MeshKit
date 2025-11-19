@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  # 信令服务器
+  signaling:
+    build:
+      context: .
+      dockerfile: apps/signaling/Dockerfile
+    container_name: meshkit-signaling
+    ports:
+      - "7000:7000"  # WebSocket 端口
+      - "8000:8000"  # PeerJS 端口
+    environment:
+      - NODE_ENV=production
+      - WS_PORT=7000
+      - PEER_PORT=8000
+    restart: unless-stopped
+    networks:
+      - meshkit-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Web 应用
+  web:
+    build:
+      context: .
+      dockerfile: packages/web/Dockerfile
+    container_name: meshkit-web
+    ports:
+      - "3000:80"  # 将容器的 80 端口映射到主机的 3000 端口
+    depends_on:
+      - signaling
+    restart: unless-stopped
+    networks:
+      - meshkit-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  meshkit-network:
+    driver: bridge

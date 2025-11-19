@@ -5,6 +5,8 @@ node_modules/
 # Build outputs
 dist/
 build/
+# Exception: desktop build resources (icons, entitlements, etc.)
+!packages/desktop/build/
 .turbo/
 
 # Logs
