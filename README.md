@@ -636,3 +636,7 @@ pnpm --filter @meshkit/core build
 [GitHub](https://github.com/cainiaopppppppp/MeshKit) • [Issues](https://github.com/cainiaopppppppp/MeshKit/issues) • [Discussions](https://github.com/cainiaopppppppp/MeshKit/discussions)
 
 </div>
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=cainiaopppppppp/MeshKit.git&type=date&legend=top-left)](https://www.star-history.com/#cainiaopppppppp/MeshKit.git&type=date&legend=top-left)
