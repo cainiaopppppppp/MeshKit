@@ -637,6 +637,5 @@ pnpm --filter @meshkit/core build
 
 </div>
 
-## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=cainiaopppppppp/MeshKit.git&type=date&legend=top-left)](https://www.star-history.com/#cainiaopppppppp/MeshKit.git&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=cainiaopppppppp/MeshKit&type=Date)](https://star-history.com/#cainiaopppppppp/MeshKit&Date)
