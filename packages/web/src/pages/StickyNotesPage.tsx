@@ -3,6 +3,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
+import { PasswordConfirmDialog } from '../components/PasswordConfirmDialog';
 import { StickyNoteCard } from '../components/StickyNoteCard';
 import { StickyNotesRoom } from '../services/StickyNotesRoom';
 import type { StickyNote, UserInfo, RoomConfig } from '../types/stickyNote';
@@ -29,6 +30,7 @@ export function StickyNotesPage() {
   const [customColor, setCustomColor] = useState('#FFE6E6');
   const [encryptionMethod, setEncryptionMethod] = useState<EncryptionMethod>('AES-256-CBC');
   const [roomExpiresIn, setRoomExpiresIn] = useState<number | null>(null);
+  const [showDestroyPasswordDialog, setShowDestroyPasswordDialog] = useState(false);
 
   // 画布拖动状态
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
@@ -156,6 +158,21 @@ export function StickyNotesPage() {
     setNotes([]);
     setUsers([]);
     setRoomInfo(null);
+    setShowDestroyPasswordDialog(false);
+  };
+
+  const destroyCurrentRoom = async (verifyPassword?: string) => {
+    if (!roomRef.current) return;
+
+    try {
+      await roomRef.current.destroyRoom(verifyPassword);
+      setShowDestroyPasswordDialog(false);
+      setTimeout(() => {
+        handleLeaveRoom();
+      }, 500);
+    } catch (error) {
+      alert((error as Error).message || 'Failed to destroy room');
+    }
   };
 
   // 销毁房间
@@ -166,24 +183,20 @@ export function StickyNotesPage() {
       return;
     }
 
-    try {
-      // 如果是加密房间，需要输入密码验证
-      let verifyPassword: string | null = null;
-      if (roomInfo?.isEncrypted) {
-        verifyPassword = prompt('这是加密房间，请输入密码以验证身份：');
-        if (verifyPassword === null) {
-          // 用户取消
-          return;
-        }
-      }
-
-      await roomRef.current.destroyRoom(verifyPassword || undefined);
-      setTimeout(() => {
-        handleLeaveRoom();
-      }, 500); // 延迟离开，确保销毁信号已发送
-    } catch (error) {
-      alert((error as Error).message || '销毁房间失败');
+    if (roomInfo?.isEncrypted) {
+      setShowDestroyPasswordDialog(true);
+      return;
     }
+
+    await destroyCurrentRoom();
+  };
+
+  const handleDestroyRoomConfirm = async (verifyPassword: string) => {
+    await destroyCurrentRoom(verifyPassword);
+  };
+
+  const handleDestroyRoomCancel = () => {
+    setShowDestroyPasswordDialog(false);
   };
 
   // 添加便签
@@ -966,6 +979,16 @@ export function StickyNotesPage() {
           </div>
         </div>
       </div>
+
+      {showDestroyPasswordDialog && (
+        <PasswordConfirmDialog
+          title="Verify Password"
+          message="This room is encrypted. Enter the password to confirm destruction."
+          confirmLabel="Verify & Destroy"
+          onConfirm={handleDestroyRoomConfirm}
+          onCancel={handleDestroyRoomCancel}
+        />
+      )}
     </div>
   );
 }

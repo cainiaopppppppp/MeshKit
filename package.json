@@ -7,12 +7,10 @@
     "dev": "turbo run dev",
     "dev:web": "pnpm --filter web dev",
     "dev:desktop": "pnpm --filter desktop dev",
-    "dev:mobile": "pnpm --filter mobile start",
     "dev:signaling": "pnpm --filter signaling dev",
     "build": "turbo run build",
     "build:web": "pnpm --filter web build",
     "build:desktop": "pnpm --filter desktop build",
-    "build:mobile": "pnpm --filter mobile build",
     "type-check": "turbo run type-check",
     "lint": "turbo run lint",
     "clean": "turbo run clean && rm -rf node_modules"

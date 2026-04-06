@@ -251,7 +251,7 @@ netstat -ano | findstr :3000
 
 如果遇到 CORS 错误，需要在信令服务器添加 CORS 支持。
 
-修改 `apps/signaling/src/index.ts`：
+修改 `apps/signaling/src/server.js`：
 
 ```typescript
 import cors from 'cors';

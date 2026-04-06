@@ -7,6 +7,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
+import './formControls.css';
 
 // 初始化错误抑制器
 initErrorSuppressor();

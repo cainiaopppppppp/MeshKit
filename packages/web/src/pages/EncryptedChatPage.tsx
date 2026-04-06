@@ -11,6 +11,25 @@ import { ChatMessageCard } from '../components/ChatMessageCard';
 import { ENCRYPTION_METHODS, type EncryptionMethod } from '../utils/ChatCrypto';
 import type { ChatMessage, ChatUser, ChatRoomConfig } from '../types/chat';
 
+function SecureRoomIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M12 3.75 18.5 6v5.25c0 4.05-2.38 7.25-6.5 9-4.12-1.75-6.5-4.95-6.5-9V6L12 3.75Z" />
+      <path d="M9.5 11.25V10a2.5 2.5 0 1 1 5 0v1.25" />
+      <rect x="8.5" y="11.25" width="7" height="5.25" rx="1.5" />
+    </svg>
+  );
+}
+
 export function EncryptedChatPage() {
   useP2P();
 
@@ -362,7 +381,7 @@ export function EncryptedChatPage() {
             {/* 清除房间数据按钮 */}
             <button
               onClick={handleClearRoomData}
-              className="w-full py-2 text-sm text-gray-400 hover:text-gray-600 transition-colors"
+              className="w-full py-2.5 px-4 bg-red-50 text-red-700 border border-red-200 rounded-lg font-medium hover:bg-red-100 hover:border-red-300 transition-all"
             >
               清除本地数据
             </button>
@@ -408,7 +427,10 @@ export function EncryptedChatPage() {
           <div className="flex items-center gap-4">
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold">🔐 房间: {roomId}</h2>
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 shadow-sm">
+                  <SecureRoomIcon className="h-[18px] w-[18px]" />
+                </span>
+                <h2 className="text-lg font-bold text-gray-900">房间: {roomId}</h2>
                 {/* 复制房间码按钮 */}
                 <button
                   onClick={copyRoomId}

@@ -433,7 +433,7 @@ pnpm release:linux # Linux
 
 #### 修改端口
 
-**信令服务器端口**（`apps/signaling/src/index.ts`）：
+**信令服务器端口**（`apps/signaling/src/server.js`）：
 ```typescript
 const WS_PORT = 7000; // WebSocket 端口
 const PEER_PORT = 8000; // PeerJS 端口
