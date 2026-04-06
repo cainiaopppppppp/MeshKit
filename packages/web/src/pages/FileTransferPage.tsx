@@ -275,7 +275,7 @@ export function FileTransferPage() {
 
     // 检查连接状态
     if (!isConnected) {
-      alert('⚠️ 未连接到信令服务器\n\n请检查：\n1. 信令服务器是否正常运行\n2. 网络连接是否正常\n3. 刷新页面重试');
+      alert('未连接到信令服务器\n\n请检查：\n1. 信令服务器是否正常运行\n2. 网络连接是否正常\n3. 刷新页面重试');
       return;
     }
 
@@ -304,7 +304,7 @@ export function FileTransferPage() {
           encryptionMethod: options.encryptionMethod,
         });
         if (!success) {
-          alert('❌ 发送失败\n\n可能原因：\n1. 信令服务器连接断开\n2. 目标设备离线\n3. 网络连接问题\n\n建议：刷新页面重试');
+          alert('发送失败\n\n可能原因：\n1. 信令服务器连接断开\n2. 目标设备离线\n3. 网络连接问题\n\n建议：刷新页面重试');
         }
       } else {
         // 单文件模式：将加密配置传递给 FileTransferManager
@@ -316,7 +316,7 @@ export function FileTransferPage() {
       }
     } catch (error) {
       console.error('[App] Send file error:', error);
-      alert('❌ 发送失败：' + (error as Error).message);
+      alert('发送失败：' + (error as Error).message);
     } finally {
       setPendingSendDeviceId(null);
     }
@@ -400,13 +400,13 @@ export function FileTransferPage() {
         );
 
         if (!isValid) {
-          alert('❌ 密码错误\n\n请输入正确的密码');
+          alert('密码错误\n\n请输入正确的密码');
           return; // 不关闭对话框，让用户重新输入
         }
         console.log('[App] Password verified successfully');
       } catch (error) {
         console.error('[App] Password verification error:', error);
-        alert('❌ 密码验证失败\n\n请重试');
+        alert('密码验证失败\n\n请重试');
         return;
       }
     }
@@ -564,7 +564,7 @@ export function FileTransferPage() {
         );
 
         if (!isValid) {
-          alert('❌ 密码错误，请重试');
+          alert('密码错误，请重试');
           return; // 保持对话框打开
         }
 
@@ -578,7 +578,7 @@ export function FileTransferPage() {
         setShowFileSelector(true);
       } catch (error) {
         console.error('[App] Password verification failed:', error);
-        alert('❌ 密码验证失败：' + (error as Error).message);
+        alert('密码验证失败：' + (error as Error).message);
       }
     }
   };
@@ -833,7 +833,7 @@ export function FileTransferPage() {
       if (direction === 'send') {
         // 发送方：接收方拒绝了传输
         const displayMessage = message || '接收方拒绝了文件传输';
-        alert(`❌ ${displayMessage}\n\n您可以重新发送文件。`);
+        alert(`${displayMessage}\n\n您可以重新发送文件。`);
         console.log('[FileTransferPage] Transfer rejected:', displayMessage);
       }
     };

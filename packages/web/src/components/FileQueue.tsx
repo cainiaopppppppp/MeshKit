@@ -3,6 +3,7 @@
  * 显示文件队列和传输状态
  */
 import type { FileQueueItem } from '@meshkit/core';
+import { InfoIcon, QueueListIcon, TransferStatusIcon, TrashIcon, XCircleIcon } from './FileTransferIcons';
 
 interface FileQueueProps {
   queue: FileQueueItem[];
@@ -16,17 +17,6 @@ export function FileQueue({ queue, isSender = false, onRemove }: FileQueueProps)
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
     if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
     return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
-  };
-
-  const getStatusIcon = (status: string): string => {
-    switch (status) {
-      case 'pending': return '⏳';
-      case 'transferring': return '📤';
-      case 'completed': return '✅';
-      case 'skipped': return '⏭️';
-      case 'failed': return '❌';
-      default: return '📄';
-    }
   };
 
   const getStatusText = (status: string): string => {
@@ -57,13 +47,31 @@ export function FileQueue({ queue, isSender = false, onRemove }: FileQueueProps)
   const completedCount = queue.filter(item => item.status === 'completed').length;
   const failedCount = queue.filter(item => item.status === 'failed').length;
 
+  const getStatusBadgeClasses = (status: string): string => {
+    switch (status) {
+      case 'transferring':
+        return 'border-blue-200 bg-blue-50 text-blue-600';
+      case 'completed':
+        return 'border-green-200 bg-green-50 text-green-600';
+      case 'failed':
+        return 'border-red-200 bg-red-50 text-red-600';
+      case 'skipped':
+        return 'border-gray-200 bg-gray-50 text-gray-400';
+      default:
+        return 'border-gray-200 bg-white text-gray-500';
+    }
+  };
+
   return (
     <div className="file-queue">
       {/* 统计摘要 */}
       <div className="mb-4 p-4 bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg">
-        <h3 className="text-lg font-bold text-gray-800 mb-2">
-          📋 文件队列
-        </h3>
+        <div className="mb-3 flex items-center gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-blue-200 bg-white text-blue-600 shadow-sm">
+            <QueueListIcon className="h-5 w-5" />
+          </span>
+          <h3 className="text-lg font-bold text-gray-800">文件队列</h3>
+        </div>
         <div className="grid grid-cols-2 gap-2 text-sm">
           <div className="text-gray-700">
             文件总数: <strong>{queue.length}</strong>
@@ -102,8 +110,8 @@ export function FileQueue({ queue, isSender = false, onRemove }: FileQueueProps)
           >
             <div className="flex items-center gap-3">
               {/* 状态图标 */}
-              <div className="text-2xl">
-                {getStatusIcon(item.status)}
+              <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border ${getStatusBadgeClasses(item.status)}`}>
+                <TransferStatusIcon status={item.status} className="h-5 w-5" />
               </div>
 
               {/* 文件信息 */}
@@ -142,8 +150,9 @@ export function FileQueue({ queue, isSender = false, onRemove }: FileQueueProps)
 
                 {/* 错误信息 */}
                 {item.status === 'failed' && item.error && (
-                  <div className="mt-1 text-xs text-red-600">
-                    ❌ {item.error}
+                  <div className="mt-1 flex items-center gap-1.5 text-xs text-red-600">
+                    <XCircleIcon className="h-3.5 w-3.5 shrink-0" />
+                    <span>{item.error}</span>
                   </div>
                 )}
               </div>
@@ -155,7 +164,7 @@ export function FileQueue({ queue, isSender = false, onRemove }: FileQueueProps)
                   className="text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-lg transition-all"
                   title="移除此文件"
                 >
-                  🗑️
+                  <TrashIcon className="h-5 w-5" />
                 </button>
               )}
             </div>
@@ -166,9 +175,12 @@ export function FileQueue({ queue, isSender = false, onRemove }: FileQueueProps)
       {/* 底部提示 */}
       {queue.length > 0 && (
         <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-          <p className="text-xs text-gray-600">
-            💡 <strong>提示:</strong> 这是传输的文件
-            {!isSender && '，完成后点击下载'}
+          <p className="flex items-center gap-2 text-xs text-gray-600">
+            <InfoIcon className="h-4 w-4 shrink-0 text-gray-500" />
+            <span>
+              <strong>提示:</strong> 这是传输的文件
+              {!isSender && '，完成后点击下载'}
+            </span>
           </p>
         </div>
       )}

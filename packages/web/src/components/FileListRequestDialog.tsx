@@ -4,6 +4,16 @@
  */
 
 import { useState } from 'react';
+import {
+  BanIcon,
+  ClockIcon,
+  InfoIcon,
+  LockIcon,
+  PackageIcon,
+  ShieldLockIcon,
+  UserCircleIcon,
+  WarningIcon,
+} from './FileTransferIcons';
 
 interface FileListRequestDialogProps {
   senderName: string;
@@ -45,13 +55,15 @@ export function FileListRequestDialog({
           <h2 className="text-xl font-semibold text-gray-900">收到文件列表传输请求</h2>
           <div className="flex gap-2">
             {passwordProtected && (
-              <span className="bg-yellow-100 text-yellow-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                🔒 需要密码
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-yellow-100 px-2.5 py-1 text-xs font-medium text-yellow-800">
+                <LockIcon className="h-3.5 w-3.5" />
+                <span>需要密码</span>
               </span>
             )}
             {encrypted && (
-              <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                🔐 已加密
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-800">
+                <ShieldLockIcon className="h-3.5 w-3.5" />
+                <span>已加密</span>
               </span>
             )}
           </div>
@@ -60,7 +72,9 @@ export function FileListRequestDialog({
         {/* 发送者信息 */}
         <div className="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-2xl">👤</span>
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-blue-200 bg-white text-blue-600 shadow-sm">
+              <UserCircleIcon className="h-5 w-5" />
+            </span>
             <div>
               <div className="text-sm text-gray-600">来自</div>
               <div className="font-semibold text-gray-900">{senderName}</div>
@@ -71,7 +85,9 @@ export function FileListRequestDialog({
         {/* 文件列表信息 */}
         <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
           <div className="flex items-start gap-3">
-            <span className="text-3xl">📦</span>
+            <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-gray-200 bg-white text-gray-600 shadow-sm">
+              <PackageIcon className="h-6 w-6" />
+            </span>
             <div className="flex-1 min-w-0">
               <div className="font-medium text-gray-900">
                 {fileCount} 个文件
@@ -92,7 +108,7 @@ export function FileListRequestDialog({
         {passwordProtected && (
           <div className="mb-6 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
             <div className="flex items-start gap-2">
-              <span className="text-yellow-600 mt-0.5">⚠️</span>
+              <WarningIcon className="mt-0.5 h-4 w-4 shrink-0 text-yellow-600" />
               <div className="text-sm text-yellow-800">
                 这些文件受密码保护，接受后需要输入密码才能选择和接收文件。
               </div>
@@ -103,7 +119,7 @@ export function FileListRequestDialog({
         {/* 说明 */}
         <div className="mb-6 p-3 bg-gray-50 border border-gray-200 rounded-lg">
           <div className="flex items-start gap-2">
-            <span className="text-blue-600 mt-0.5">ℹ️</span>
+            <InfoIcon className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
             <div className="text-sm text-gray-700">
               接受后，您可以选择要接收的文件。
             </div>
@@ -142,7 +158,7 @@ export function FileListRequestDialog({
                       }}
                       className="w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-100 rounded-t-lg transition-all flex items-center gap-2"
                     >
-                      <span>🚫</span>
+                      <BanIcon className="h-4 w-4 shrink-0 text-red-500" />
                       <div>
                         <div className="font-medium">屏蔽此设备 10 分钟</div>
                         <div className="text-xs text-gray-500">10分钟内自动拒绝该设备的所有请求</div>
@@ -155,7 +171,7 @@ export function FileListRequestDialog({
                       }}
                       className="w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-100 rounded-b-lg transition-all flex items-center gap-2"
                     >
-                      <span>⛔</span>
+                      <ClockIcon className="h-4 w-4 shrink-0 text-red-500" />
                       <div>
                         <div className="font-medium">屏蔽此设备 1 小时</div>
                         <div className="text-xs text-gray-500">1小时内自动拒绝该设备的所有请求</div>

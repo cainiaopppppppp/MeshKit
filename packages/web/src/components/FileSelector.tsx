@@ -4,6 +4,7 @@
  */
 import { useState } from 'react';
 import type { FileMetadata } from '@meshkit/core';
+import { FileTypeIcon, InfoIcon, TransferInboxIcon, WarningIcon } from './FileTransferIcons';
 
 interface FileSelectorProps {
   files: FileMetadata[];
@@ -55,8 +56,13 @@ export function FileSelector({ files, totalSize, onConfirm, onCancel }: FileSele
 
   return (
     <div className="file-selector">
-      <div className="text-center mb-4">
-        <h2 className="text-2xl font-bold text-gray-800 mb-2">📥 接收文件</h2>
+      <div className="mb-4 text-center">
+        <div className="mb-3 flex justify-center">
+          <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-blue-200 bg-blue-50 text-blue-600 shadow-sm">
+            <TransferInboxIcon className="h-6 w-6" />
+          </span>
+        </div>
+        <h2 className="text-2xl font-bold text-gray-800 mb-2">接收文件</h2>
         <p className="text-gray-600">请选择要接收的文件</p>
       </div>
 
@@ -99,13 +105,8 @@ export function FileSelector({ files, totalSize, onConfirm, onCancel }: FileSele
             />
 
             {/* 文件图标 */}
-            <div className="text-3xl">
-              {file.type.startsWith('image/') ? '🖼️' :
-               file.type.startsWith('video/') ? '🎥' :
-               file.type.startsWith('audio/') ? '🎵' :
-               file.type.includes('pdf') ? '📕' :
-               file.type.includes('zip') || file.type.includes('rar') ? '📦' :
-               '📄'}
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 shadow-sm">
+              <FileTypeIcon type={file.type} className="h-6 w-6" />
             </div>
 
             {/* 文件信息 */}
@@ -126,9 +127,10 @@ export function FileSelector({ files, totalSize, onConfirm, onCancel }: FileSele
 
       {/* 提示信息 */}
       {selectedIndexes.size === 0 && (
-        <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-          <p className="text-sm text-yellow-800">
-            ⚠️ 请至少选择一个文件
+        <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 p-3">
+          <p className="flex items-center gap-2 text-sm text-yellow-800">
+            <WarningIcon className="h-4 w-4 shrink-0" />
+            <span>请至少选择一个文件</span>
           </p>
         </div>
       )}
@@ -148,14 +150,17 @@ export function FileSelector({ files, totalSize, onConfirm, onCancel }: FileSele
           disabled={selectedIndexes.size === 0}
           className="flex-1 py-3 px-4 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg transition-all"
         >
-          确认接收 {selectedIndexes.size > 0 && `(${selectedIndexes.size}个文件)`}
+          {`确认接收${selectedIndexes.size > 0 ? ` (${selectedIndexes.size} 个文件)` : ''}`}
         </button>
       </div>
 
       {/* 提示 */}
-      <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-        <p className="text-xs text-gray-600">
-          💡 <strong>提示:</strong> 文件将依次传输，完成后自动下载
+      <div className="mt-4 rounded-lg bg-gray-50 p-3">
+        <p className="flex items-center gap-2 text-xs text-gray-600">
+          <InfoIcon className="h-4 w-4 shrink-0 text-gray-500" />
+          <span>
+            <strong>提示:</strong> 文件将依次传输，完成后自动下载
+          </span>
         </p>
       </div>
     </div>

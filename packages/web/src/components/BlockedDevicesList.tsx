@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import type { BlockedDevice } from '@meshkit/core';
+import { BanIcon, DeviceIcon } from './FileTransferIcons';
 
 interface BlockedDevicesListProps {
   blockedDevices: BlockedDevice[];
@@ -63,7 +64,9 @@ export function BlockedDevicesList({ blockedDevices, onUnblock }: BlockedDevices
         className="w-full px-4 py-3 flex items-center justify-between hover:bg-red-100 transition-all"
       >
         <div className="flex items-center gap-2">
-          <span className="text-lg">🚫</span>
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-red-200 bg-white text-red-600 shadow-sm">
+            <BanIcon className="h-4 w-4" />
+          </span>
           <span className="font-medium text-red-900">
             已屏蔽的设备 ({blockedDevices.length})
           </span>
@@ -87,8 +90,11 @@ export function BlockedDevicesList({ blockedDevices, onUnblock }: BlockedDevices
               className="bg-white border border-red-200 rounded-lg p-3 flex items-center justify-between"
             >
               <div className="flex-1 min-w-0">
-                <div className="font-medium text-gray-900 truncate">
-                  📱 {device.deviceName}
+                <div className="flex items-center gap-2 font-medium text-gray-900 truncate">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-600">
+                    <DeviceIcon className="h-4 w-4" />
+                  </span>
+                  <span className="truncate">{device.deviceName}</span>
                 </div>
                 <div className="text-sm text-gray-600 mt-0.5">
                   剩余: {formatRemainingTime(remainingTimes[device.deviceId] || 0)}

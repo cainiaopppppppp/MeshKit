@@ -3,6 +3,7 @@
  */
 import { useState } from 'react';
 import { useRoom } from '../hooks/useRoom';
+import { CheckCircleIcon, LockIcon, WarningIcon } from './FileTransferIcons';
 
 export function JoinRoom() {
   const { joinRoom, isJoining, error } = useRoom();
@@ -58,7 +59,10 @@ export function JoinRoom() {
             <span className="text-sm text-gray-500">还需输入 {6 - code.length} 位数字</span>
           )}
           {code.length === 6 && (
-            <span className="text-sm text-green-600 font-semibold">✓ 取件码已输入完整</span>
+            <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-green-600">
+              <CheckCircleIcon className="h-4 w-4" />
+              <span>取件码已输入完整</span>
+            </span>
           )}
         </div>
       </div>
@@ -73,8 +77,11 @@ export function JoinRoom() {
             onChange={(e) => setEnablePassword(e.target.checked)}
             className="w-4 h-4 text-green-600 rounded focus:ring-2 focus:ring-green-500"
           />
-          <label htmlFor="enable-password" className="text-sm text-gray-700 font-medium cursor-pointer">
-            🔒 房间有密码保护
+          <label htmlFor="enable-password" className="inline-flex items-center gap-2 text-sm text-gray-700 font-medium cursor-pointer">
+            <span className="flex h-6 w-6 items-center justify-center rounded-md border border-green-200 bg-green-50 text-green-600">
+              <LockIcon className="h-3.5 w-3.5" />
+            </span>
+            <span>房间有密码保护</span>
           </label>
         </div>
 
@@ -95,8 +102,11 @@ export function JoinRoom() {
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
-          ❌ {error}
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+          <div className="flex items-center gap-2">
+            <WarningIcon className="h-4 w-4 shrink-0" />
+            <span>{error}</span>
+          </div>
         </div>
       )}
 
@@ -105,7 +115,7 @@ export function JoinRoom() {
         onClick={handleJoin}
         disabled={code.length !== 6 || isJoining}
       >
-        {isJoining ? ' 连接中...' : ' 开始接收文件'}
+        {isJoining ? '连接中...' : '开始接收文件'}
       </button>
 
       <div className="mt-6 p-4 bg-gray-50 rounded-lg">

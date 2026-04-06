@@ -4,6 +4,7 @@
  */
 
 import { useState } from 'react';
+import { InfoIcon, LockIcon, PaperclipIcon } from './FileTransferIcons';
 
 interface PasswordInputDialogProps {
   fileName: string;
@@ -42,15 +43,18 @@ export function PasswordInputDialog({
         {/* 标题 */}
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold text-gray-900">输入密码</h2>
-          <span className="bg-yellow-100 text-yellow-800 text-xs font-medium px-2.5 py-0.5 rounded">
-            🔒 需要密码
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-yellow-100 px-2.5 py-1 text-xs font-medium text-yellow-800">
+            <LockIcon className="h-3.5 w-3.5" />
+            <span>需要密码</span>
           </span>
         </div>
 
         {/* 文件信息 */}
         <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-2xl">📎</span>
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 shadow-sm">
+              <PaperclipIcon className="h-5 w-5" />
+            </span>
             <div className="flex-1 min-w-0">
               <div className="text-sm text-gray-600">文件名</div>
               <div className="font-medium text-gray-900 truncate" title={fileName}>
@@ -63,7 +67,7 @@ export function PasswordInputDialog({
         {/* 提示信息 */}
         <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
           <div className="flex items-start gap-2">
-            <span className="text-blue-600 mt-0.5">ℹ️</span>
+            <InfoIcon className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
             <div className="text-sm text-blue-800">
               此文件受密码保护，请向发送方索取密码后输入。
             </div>

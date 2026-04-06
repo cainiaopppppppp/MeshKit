@@ -30,8 +30,8 @@ export function RoomView() {
     if (isTransferring) {
       const confirmLeave = window.confirm(
         host
-          ? '⚠️ 请确保文件已发送完毕！\n\n确定要取消发送吗？取件码将失效。'
-          : '⚠️ 请确保文件已接收完毕！\n\n确定要取消接收吗？未完成的文件将丢失。'
+          ? '请确保文件已发送完毕。\n\n确定要取消发送吗？取件码将失效。'
+          : '请确保文件已接收完毕。\n\n确定要取消接收吗？未完成的文件将丢失。'
       );
 
       if (!confirmLeave) {
@@ -54,7 +54,7 @@ export function RoomView() {
         ).join('\n');
 
         const confirmLeave = window.confirm(
-          `⚠️ 房间内有 ${receivingMembers.length} 个成员正在接收文件！\n\n正在接收的成员：\n${memberDetails}\n\n确定要关闭房间吗？这将中断他们的传输。`
+          `房间内有 ${receivingMembers.length} 个成员正在接收文件。\n\n正在接收的成员：\n${memberDetails}\n\n确定要关闭房间吗？这将中断他们的传输。`
         );
 
         if (!confirmLeave) {
@@ -63,7 +63,7 @@ export function RoomView() {
       } else if (queueSummary && queueSummary.transferringCount > 0) {
         // 如果有文件正在传输队列中
         const confirmLeave = window.confirm(
-          `⚠️ 还有 ${queueSummary.transferringCount} 个文件正在传输中！\n\n确定要取消发送吗？取件码将失效。`
+          `还有 ${queueSummary.transferringCount} 个文件正在传输中。\n\n确定要取消发送吗？取件码将失效。`
         );
 
         if (!confirmLeave) {

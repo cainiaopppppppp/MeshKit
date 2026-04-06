@@ -4,6 +4,7 @@
  */
 
 import { useState } from 'react';
+import { LockIcon } from './FileTransferIcons';
 
 interface RoomPasswordDialogProps {
   onConfirm: (password: string | null) => void;
@@ -67,7 +68,12 @@ export function RoomPasswordDialog({ onConfirm, onCancel }: RoomPasswordDialogPr
               }}
               className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
             />
-            <span className="text-sm font-medium text-gray-700">🔒 设置接收密码</span>
+            <span className="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
+              <span className="flex h-7 w-7 items-center justify-center rounded-md border border-blue-200 bg-blue-50 text-blue-600">
+                <LockIcon className="h-4 w-4" />
+              </span>
+              <span>设置接收密码</span>
+            </span>
           </label>
           <p className="text-xs text-gray-500 mt-1 ml-6">
             启用后，接收方需要输入正确密码才能接收文件

@@ -4,6 +4,7 @@
  */
 
 import { useState } from 'react';
+import { FileTypeIcon, LockIcon, ShieldLockIcon } from './FileTransferIcons';
 
 interface ReceiveConfirmDialogProps {
   senderName: string;
@@ -38,15 +39,6 @@ export function ReceiveConfirmDialog({
     return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i];
   };
 
-  const getFileIcon = (type: string) => {
-    if (type.startsWith('image/')) return '🖼️';
-    if (type.startsWith('video/')) return '🎬';
-    if (type.startsWith('audio/')) return '🎵';
-    if (type.includes('pdf')) return '📄';
-    if (type.includes('zip') || type.includes('rar')) return '📦';
-    return '📎';
-  };
-
   const handleAccept = () => {
     if (passwordProtected || encrypted) {
       if (!password) {
@@ -74,13 +66,15 @@ export function ReceiveConfirmDialog({
           <h2 className="text-xl font-semibold text-gray-900">接收文件确认</h2>
           <div className="flex gap-2">
             {passwordProtected && (
-              <span className="bg-yellow-100 text-yellow-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                🔒 需要密码
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-yellow-100 px-2.5 py-1 text-xs font-medium text-yellow-800">
+                <LockIcon className="h-3.5 w-3.5" />
+                <span>需要密码</span>
               </span>
             )}
             {encrypted && (
-              <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                🔐 已加密
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-800">
+                <ShieldLockIcon className="h-3.5 w-3.5" />
+                <span>已加密</span>
               </span>
             )}
           </div>
@@ -88,7 +82,9 @@ export function ReceiveConfirmDialog({
 
         <div className="bg-gray-50 rounded-lg p-4 mb-4">
           <div className="flex items-start space-x-3">
-            <span className="text-3xl">{getFileIcon(fileType)}</span>
+            <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-gray-200 bg-white text-gray-600 shadow-sm">
+              <FileTypeIcon type={fileType} className="h-6 w-6" />
+            </span>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-gray-500 mb-1">来自</p>
               <p className="font-medium text-gray-900 mb-3">{senderName}</p>
