@@ -7,32 +7,38 @@
   "type": "commonjs",
   "scripts": {
     "dev": "concurrently \"pnpm dev:renderer\" \"pnpm dev:electron\"",
-    "dev:electron": "pnpm build:main && pnpm build:preload && electron --inspect=5858 .",
+    "dev:electron": "pnpm build:main && pnpm build:preload && pnpm build:web-share && electron --inspect=5858 .",
     "dev:renderer": "vite",
     "watch:main": "tsc -p tsconfig.main.json --watch",
     "watch:preload": "tsc -p tsconfig.preload.json --watch",
-    "build": "pnpm build:main && pnpm build:preload && pnpm build:renderer",
+    "build": "pnpm build:main && pnpm build:preload && pnpm build:renderer && pnpm build:web-share",
     "build:main": "tsc -p tsconfig.main.json",
     "build:preload": "tsc -p tsconfig.preload.json",
     "build:renderer": "vite build",
+    "build:web-share": "pnpm --filter web build && node ./scripts/copy-web-share.mjs",
+    "prepare:builder": "node ./scripts/prepare-electron-builder.mjs",
     "prebuild": "pnpm clean",
     "postinstall": "electron-builder install-app-deps",
-    "package": "pnpm build && electron-builder --dir",
-    "release": "pnpm build && electron-builder",
-    "release:win": "pnpm build && electron-builder --win",
-    "release:mac": "pnpm build && electron-builder --mac",
-    "release:linux": "pnpm build && electron-builder --linux",
-    "dist": "electron-builder",
-    "dist:win": "electron-builder --win",
-    "dist:mac": "electron-builder --mac",
-    "dist:linux": "electron-builder --linux",
+    "package": "pnpm build && pnpm prepare:builder && electron-builder --dir",
+    "release": "pnpm build && pnpm prepare:builder && electron-builder",
+    "release:win": "pnpm build && pnpm prepare:builder && electron-builder --win",
+    "release:mac": "pnpm build && pnpm prepare:builder && electron-builder --mac",
+    "release:linux": "pnpm build && pnpm prepare:builder && electron-builder --linux",
+    "dist": "pnpm prepare:builder && electron-builder",
+    "dist:win": "pnpm prepare:builder && electron-builder --win",
+    "dist:mac": "pnpm prepare:builder && electron-builder --mac",
+    "dist:linux": "pnpm prepare:builder && electron-builder --linux",
     "type-check": "tsc --noEmit",
     "clean": "rm -rf dist release"
   },
   "dependencies": {
     "@meshkit/core": "workspace:*",
     "electron-updater": "^6.1.7",
-    "fs-extra": "^11.2.0"
+    "express": "^4.21.2",
+    "fs-extra": "^11.2.0",
+    "peer": "^1.0.2",
+    "qrcode": "^1.5.4",
+    "ws": "^8.14.0"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
@@ -93,11 +99,17 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         },
         {
           "target": "zip",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "hardenedRuntime": true,
@@ -128,11 +140,16 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64", "ia32"]
+          "arch": [
+            "x64",
+            "ia32"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "build/icon.ico"
@@ -156,15 +173,24 @@
       "target": [
         {
           "target": "AppImage",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         },
         {
           "target": "deb",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         },
         {
           "target": "rpm",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "category": "Utility",

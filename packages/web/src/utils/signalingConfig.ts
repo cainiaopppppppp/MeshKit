@@ -429,7 +429,7 @@ export async function autoConfigureSignaling(draft?: Partial<SignalingConfigDraf
   };
 }
 
-function parseSharedSignalingConfigFromSearch(search: string): ResolvedSignalingConfig | null {
+export function parseSharedSignalingConfigFromSearch(search: string): ResolvedSignalingConfig | null {
   const params = new URLSearchParams(search);
   const host = params.get(SHARE_HOST_PARAM)?.trim();
 
@@ -442,6 +442,28 @@ function parseSharedSignalingConfigFromSearch(search: string): ResolvedSignaling
     wsPort: sanitizePort(params.get(SHARE_WS_PORT_PARAM) ?? undefined, DEFAULT_WS_PORT),
     peerPort: sanitizePort(params.get(SHARE_PEER_PORT_PARAM) ?? undefined, DEFAULT_PEER_PORT),
   };
+}
+
+export function parseSharedSignalingConfigFromUrl(input: string): ResolvedSignalingConfig | null {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.startsWith('?')) {
+    return parseSharedSignalingConfigFromSearch(trimmed);
+  }
+
+  try {
+    return parseSharedSignalingConfigFromSearch(new URL(trimmed).search);
+  } catch {
+    const questionMarkIndex = trimmed.indexOf('?');
+    if (questionMarkIndex >= 0) {
+      return parseSharedSignalingConfigFromSearch(trimmed.slice(questionMarkIndex));
+    }
+  }
+
+  return parseSharedSignalingConfigFromSearch(trimmed);
 }
 
 function applySharedConfigParams(url: URL, resolved: ResolvedSignalingConfig): void {
@@ -504,24 +526,24 @@ export function applySharedSignalingConfigFromUrl(search?: string): SharedSignal
   };
 }
 
-export async function getShareableWebUrl(pathname = '/'): Promise<ShareableWebUrlResult> {
-  const resolved = getResolvedSignalingConfig();
+async function getWebShareCandidates(primaryHost?: string): Promise<string[]> {
   const currentHost = getRuntimeHost();
   const localIPs = await getElectronLocalIPAddresses();
   const shouldUseBrowserIPs = !isRealLanHost(currentHost) || isLikelyVirtualOrHostOnlyRange(currentHost);
   const browserIPs = shouldUseBrowserIPs ? await getBrowserLocalIPAddresses() : [];
 
-  const candidates = uniqueHosts([
-    resolved.host,
+  return uniqueHosts([
+    primaryHost,
     currentHost,
     ...localIPs,
     ...browserIPs,
     'localhost',
     '127.0.0.1',
   ]).sort((a, b) => getLanHostPriority(a) - getLanHostPriority(b));
+}
 
+function buildShareableWebUrl(resolved: ResolvedSignalingConfig, candidates: string[], pathname = '/'): ShareableWebUrlResult {
   const preferredHost = getPreferredShareHost(candidates);
-
   const port = window.location.port ? `:${window.location.port}` : '';
   const normalizedPath = normalizeSharePath(pathname);
   const url = new URL(`${window.location.protocol}//${preferredHost}${port}${normalizedPath}`);
@@ -533,6 +555,23 @@ export async function getShareableWebUrl(pathname = '/'): Promise<ShareableWebUr
     host: preferredHost,
     candidates,
   };
+}
+
+export async function getShareableWebUrl(pathname = '/'): Promise<ShareableWebUrlResult> {
+  const resolved = getResolvedSignalingConfig();
+  const candidates = await getWebShareCandidates(resolved.host);
+
+  return buildShareableWebUrl(resolved, candidates, pathname);
+}
+
+export async function getShareableWebUrlForDraft(
+  draft?: Partial<SignalingConfigDraft>,
+  pathname = '/',
+): Promise<ShareableWebUrlResult> {
+  const resolvedDraft = resolveDraftSignalingConfig(draft);
+  const candidates = await getWebShareCandidates(resolvedDraft.host);
+
+  return buildShareableWebUrl(resolvedDraft, candidates, pathname);
 }
 
 export async function getDesktopShareableWebUrl(

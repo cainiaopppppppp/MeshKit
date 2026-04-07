@@ -1,65 +1,192 @@
-import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron';
-import { join } from 'path';
-import { networkInterfaces } from 'os';
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
+import { join } from 'node:path';
+
 import { autoUpdater } from 'electron-updater';
 
-// 禁用硬件加速（可选，解决某些平台的渲染问题）
-// app.disableHardwareAcceleration();
+import {
+  startEmbeddedSignaling,
+  type EmbeddedSignalingController,
+  type EmbeddedSignalingStatus,
+} from './embeddedSignaling';
+import { getLocalIPAddresses, getPreferredLocalHost } from './networkUtils';
+import {
+  startShareDiscovery,
+  type DiscoveredShare,
+  type ShareDiscoveryController,
+  type ShareDiscoveryStatus,
+} from './shareDiscovery';
+import {
+  startShareWebServer,
+  type ShareWebServerController,
+  type ShareWebServerStatus,
+} from './shareWebServer';
 
 let mainWindow: BrowserWindow | null = null;
+let signalingController: EmbeddedSignalingController | null = null;
+let shareWebController: ShareWebServerController | null = null;
+let discoveryController: ShareDiscoveryController | null = null;
+let isStoppingServices = false;
+let sharingEnabled = true;
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 const rendererDevUrl = 'http://127.0.0.1:5173';
 
-function isPrivateIPv4(address: string): boolean {
-  if (/^10\.\d+\.\d+\.\d+$/.test(address)) {
-    return true;
-  }
+let signalingStatus: EmbeddedSignalingStatus = {
+  running: false,
+  listenHost: '0.0.0.0',
+  publicHost: getPreferredLocalHost(),
+  wsPort: 7000,
+  peerPort: 8000,
+  wsUrl: `ws://${getPreferredLocalHost()}:7000/ws`,
+  peerUrl: `http://${getPreferredLocalHost()}:8000/peerjs`,
+};
 
-  if (/^192\.168\.\d+\.\d+$/.test(address)) {
-    return true;
-  }
+let shareWebStatus: ShareWebServerStatus = {
+  running: false,
+  listenHost: '0.0.0.0',
+  publicHost: getPreferredLocalHost(),
+  port: 3000,
+  url: `http://${getPreferredLocalHost()}:3000/`,
+  rootDir: getShareWebRootDir(),
+};
 
-  const match = address.match(/^172\.(\d+)\.\d+\.\d+$/);
-  if (!match) {
-    return false;
-  }
+let discoveryStatus: ShareDiscoveryStatus = {
+  running: false,
+  port: 41041,
+  deviceName: 'MeshKit',
+};
 
-  const secondOctet = Number.parseInt(match[1], 10);
-  return secondOctet >= 16 && secondOctet <= 31;
+function getShareWebRootDir(): string {
+  return join(__dirname, '../web-share');
 }
 
-function isLikelyVirtualAdapter(name: string): boolean {
-  return /vmware|virtualbox|hyper-v|vethernet|default switch|vmnet|docker|wsl|tailscale|zerotier|wireguard|bluetooth/i.test(name);
+function getDiscoveredShares(): DiscoveredShare[] {
+  return discoveryController?.getDiscoveredShares() || [];
 }
 
-function getAdapterPriority(name: string, address: string): number {
-  let score = 100;
-  const normalized = name.toLowerCase();
+function getEmbeddedServiceStatus() {
+  return {
+    sharingEnabled,
+    signaling: signalingStatus,
+    shareWeb: shareWebStatus,
+    discovery: {
+      ...discoveryStatus,
+      discoveredShares: getDiscoveredShares(),
+    },
+    preferredHost: getPreferredLocalHost(),
+    localAddresses: getLocalIPAddresses(),
+  };
+}
 
-  if (normalized.includes('wlan') || normalized.includes('wi-fi') || normalized.includes('wifi') || normalized.includes('无线')) {
-    score -= 40;
-  } else if (normalized.includes('ethernet') || normalized.includes('以太网')) {
-    score -= 30;
+async function startEmbeddedServices() {
+  if (signalingController || shareWebController || discoveryController) {
+    return;
   }
 
-  if (isPrivateIPv4(address)) {
-    score -= 20;
+  try {
+    signalingController = await startEmbeddedSignaling({
+      host: '0.0.0.0',
+      wsPort: 7000,
+      peerPort: 8000,
+    });
+    signalingStatus = signalingController.status;
+    console.log(`[desktop] Embedded signaling ready: ${signalingStatus.wsUrl}`);
+  } catch (error) {
+    signalingController = null;
+    signalingStatus = {
+      ...signalingStatus,
+      running: false,
+      error: error instanceof Error ? error.message : 'Failed to start embedded signaling',
+    };
+    console.error('[desktop] Failed to start embedded signaling:', error);
   }
 
-  if (address.startsWith('192.168.')) {
-    score -= 8;
-  } else if (address.startsWith('10.')) {
-    score -= 6;
-  } else if (address.startsWith('172.')) {
-    score -= 4;
+  try {
+    shareWebController = await startShareWebServer({
+      rootDir: getShareWebRootDir(),
+      host: '0.0.0.0',
+      preferredPort: 3000,
+    });
+    shareWebStatus = shareWebController.status;
+    console.log(`[desktop] Embedded share page ready: ${shareWebStatus.url}`);
+  } catch (error) {
+    shareWebController = null;
+    shareWebStatus = {
+      ...shareWebStatus,
+      running: false,
+      error: error instanceof Error ? error.message : 'Failed to start embedded share page',
+    };
+    console.error('[desktop] Failed to start embedded share page:', error);
   }
 
-  if (isLikelyVirtualAdapter(name)) {
-    score += 100;
+  if (signalingStatus.running && shareWebStatus.running) {
+    try {
+      discoveryController = await startShareDiscovery({
+        host: shareWebStatus.publicHost,
+        sharePort: shareWebStatus.port,
+        shareUrl: shareWebStatus.url,
+        wsPort: signalingStatus.wsPort,
+        peerPort: signalingStatus.peerPort,
+      });
+      discoveryStatus = discoveryController.status;
+      console.log(`[desktop] Share discovery ready on UDP ${discoveryStatus.port}`);
+    } catch (error) {
+      discoveryController = null;
+      discoveryStatus = {
+        ...discoveryStatus,
+        running: false,
+        error: error instanceof Error ? error.message : 'Failed to start LAN discovery',
+      };
+      console.error('[desktop] Failed to start share discovery:', error);
+    }
   }
+}
 
-  return score;
+async function stopEmbeddedServices() {
+  await Promise.allSettled([
+    discoveryController?.stop(),
+    signalingController?.stop(),
+    shareWebController?.stop(),
+  ]);
+
+  signalingStatus = {
+    ...signalingStatus,
+    running: false,
+    error: undefined,
+  };
+  shareWebStatus = {
+    ...shareWebStatus,
+    running: false,
+    error: undefined,
+  };
+  discoveryStatus = {
+    ...discoveryStatus,
+    running: false,
+    error: undefined,
+  };
+
+  discoveryController = null;
+  signalingController = null;
+  shareWebController = null;
+}
+
+async function enableSharing() {
+  sharingEnabled = true;
+  await startEmbeddedServices();
+  return getEmbeddedServiceStatus();
+}
+
+async function disableSharing() {
+  sharingEnabled = false;
+  await stopEmbeddedServices();
+  return getEmbeddedServiceStatus();
+}
+
+async function restartEmbeddedServices() {
+  await stopEmbeddedServices();
+  sharingEnabled = true;
+  await startEmbeddedServices();
+  return getEmbeddedServiceStatus();
 }
 
 function createWindow() {
@@ -68,7 +195,7 @@ function createWindow() {
     height: 800,
     minWidth: 800,
     minHeight: 600,
-    title: 'MeshKit - P2P 文件传输',
+    title: 'MeshKit - P2P Collaboration',
     webPreferences: {
       preload: join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
@@ -76,49 +203,39 @@ function createWindow() {
       sandbox: false,
       webSecurity: true,
     },
-    show: false, // 先不显示，等内容加载后再显示
+    show: false,
   });
 
-  // 窗口准备好后显示
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
   });
 
-  // 加载应用
   if (isDev) {
-    // 开发模式：加载 Vite 开发服务器
-    mainWindow.loadURL(rendererDevUrl);
-    // 打开开发者工具
+    void mainWindow.loadURL(rendererDevUrl);
     mainWindow.webContents.openDevTools();
   } else {
-    // 生产模式：加载打包后的文件
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
-    // 临时：生产模式也打开开发者工具用于调试
-    mainWindow.webContents.openDevTools();
+    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }
 
-  // 拦截新窗口打开，使用默认浏览器
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    void shell.openExternal(url);
     return { action: 'deny' };
   });
 
-  // 窗口关闭事件
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
 
-  // 创建应用菜单
   createMenu();
 }
 
 function createMenu() {
   const template: Electron.MenuItemConstructorOptions[] = [
     {
-      label: '文件',
+      label: 'File',
       submenu: [
         {
-          label: '退出',
+          label: 'Quit',
           accelerator: 'CmdOrCtrl+Q',
           click: () => {
             app.quit();
@@ -127,45 +244,44 @@ function createMenu() {
       ],
     },
     {
-      label: '编辑',
+      label: 'Edit',
       submenu: [
-        { role: 'undo', label: '撤销' },
-        { role: 'redo', label: '重做' },
+        { role: 'undo', label: 'Undo' },
+        { role: 'redo', label: 'Redo' },
         { type: 'separator' },
-        { role: 'cut', label: '剪切' },
-        { role: 'copy', label: '复制' },
-        { role: 'paste', label: '粘贴' },
-        { role: 'selectAll', label: '全选' },
+        { role: 'cut', label: 'Cut' },
+        { role: 'copy', label: 'Copy' },
+        { role: 'paste', label: 'Paste' },
+        { role: 'selectAll', label: 'Select All' },
       ],
     },
     {
-      label: '查看',
+      label: 'View',
       submenu: [
-        { role: 'reload', label: '重新加载' },
-        { role: 'forceReload', label: '强制重新加载' },
-        { role: 'toggleDevTools', label: '切换开发者工具' },
+        { role: 'reload', label: 'Reload' },
+        { role: 'forceReload', label: 'Force Reload' },
+        { role: 'toggleDevTools', label: 'Toggle DevTools' },
         { type: 'separator' },
-        { role: 'resetZoom', label: '实际大小' },
-        { role: 'zoomIn', label: '放大' },
-        { role: 'zoomOut', label: '缩小' },
+        { role: 'resetZoom', label: 'Actual Size' },
+        { role: 'zoomIn', label: 'Zoom In' },
+        { role: 'zoomOut', label: 'Zoom Out' },
         { type: 'separator' },
-        { role: 'togglefullscreen', label: '切换全屏' },
+        { role: 'togglefullscreen', label: 'Toggle Full Screen' },
       ],
     },
     {
-      label: '窗口',
+      label: 'Window',
       submenu: [
-        { role: 'minimize', label: '最小化' },
-        { role: 'close', label: '关闭' },
+        { role: 'minimize', label: 'Minimize' },
+        { role: 'close', label: 'Close' },
       ],
     },
     {
-      label: '帮助',
+      label: 'Help',
       submenu: [
         {
-          label: '关于',
+          label: 'Project Homepage',
           click: async () => {
-            const { shell } = require('electron');
             await shell.openExternal('https://github.com/cainiaopppppppp/MeshKit');
           },
         },
@@ -177,98 +293,74 @@ function createMenu() {
   Menu.setApplicationMenu(menu);
 }
 
-// 应用启动
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await enableSharing();
   createWindow();
 
-  // 检查更新（仅在生产环境）
   if (!isDev) {
-    autoUpdater.checkForUpdatesAndNotify();
+    void autoUpdater.checkForUpdatesAndNotify();
   }
 
   app.on('activate', () => {
-    // macOS: 点击 dock 图标时重新创建窗口
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
   });
 });
 
-// 所有窗口关闭时退出应用（macOS 除外）
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
 });
 
-// IPC 通信示例
-ipcMain.handle('app:getVersion', () => {
-  return app.getVersion();
-});
-
-ipcMain.handle('app:getPlatform', () => {
-  return process.platform;
-});
-
-ipcMain.handle('network:getLocalIPAddresses', () => {
-  const interfaces = networkInterfaces();
-  const candidates: Array<{ name: string; address: string }> = [];
-
-  for (const [name, group] of Object.entries(interfaces)) {
-    if (!group) continue;
-
-    for (const info of group) {
-      if (info.family === 'IPv4' && !info.internal) {
-        candidates.push({
-          name,
-          address: info.address,
-        });
-      }
-    }
+app.on('will-quit', (event) => {
+  if (isStoppingServices) {
+    return;
   }
 
-  const sortedCandidates = candidates
-    .sort((a, b) => getAdapterPriority(a.name, a.address) - getAdapterPriority(b.name, b.address));
+  event.preventDefault();
+  isStoppingServices = true;
 
-  const physicalCandidates = sortedCandidates.filter((item) => !isLikelyVirtualAdapter(item.name));
-  const preferredCandidates = physicalCandidates.length > 0 ? physicalCandidates : sortedCandidates;
-
-  return Array.from(new Set(preferredCandidates.map((item) => item.address)));
+  void stopEmbeddedServices().finally(() => {
+    app.quit();
+  });
 });
 
-// 文件选择对话框
+ipcMain.handle('app:getVersion', () => app.getVersion());
+ipcMain.handle('app:getPlatform', () => process.platform);
+ipcMain.handle('network:getLocalIPAddresses', () => getLocalIPAddresses());
+ipcMain.handle('services:getStatus', () => getEmbeddedServiceStatus());
+ipcMain.handle('services:start', () => enableSharing());
+ipcMain.handle('services:stop', () => disableSharing());
+ipcMain.handle('services:restart', () => restartEmbeddedServices());
+
 ipcMain.handle('dialog:openFile', async () => {
-  const { dialog } = require('electron');
   const result = await dialog.showOpenDialog(mainWindow!, {
     properties: ['openFile', 'multiSelections'],
   });
   return result.filePaths;
 });
 
-// 文件夹选择对话框
 ipcMain.handle('dialog:openDirectory', async () => {
-  const { dialog } = require('electron');
   const result = await dialog.showOpenDialog(mainWindow!, {
     properties: ['openDirectory'],
   });
   return result.filePaths;
 });
 
-// 保存文件对话框
 ipcMain.handle('dialog:saveFile', async (_, defaultPath: string) => {
-  const { dialog } = require('electron');
   const result = await dialog.showSaveDialog(mainWindow!, {
     defaultPath,
   });
   return result.filePath;
 });
 
-// 自动更新事件
 autoUpdater.on('update-available', () => {
-  console.log('发现新版本');
+  console.log('[desktop] Update available');
 });
 
 autoUpdater.on('update-downloaded', () => {
-  console.log('更新已下载');
+  console.log('[desktop] Update downloaded');
   autoUpdater.quitAndInstall();
 });

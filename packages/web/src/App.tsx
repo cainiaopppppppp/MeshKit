@@ -71,7 +71,7 @@ function Navigation() {
       const copied = await copyTextWithFallback(result.url);
 
       if (!copied) {
-        window.prompt('复制失败，请手动复制下面的网址：', result.url);
+        window.prompt('复制失败，请手动复制这条邀请链接：', result.url);
         return;
       }
 
@@ -79,7 +79,7 @@ function Navigation() {
       window.setTimeout(() => setCopySuccess(false), 2200);
     } catch (error) {
       console.error('[Navigation] Failed to copy share URL:', error);
-      alert('获取分享网址失败，请刷新页面后重试。');
+      alert('生成邀请链接失败，请刷新页面后重试。');
     } finally {
       setIsCopying(false);
     }
@@ -97,7 +97,7 @@ function Navigation() {
                 ? 'bg-green-500 text-white shadow-md'
                 : 'bg-white/70 text-gray-700 hover:bg-white hover:shadow-md'
             }`}
-            title="复制分享网址"
+            title="复制邀请链接"
             disabled={isCopying}
           >
             {copySuccess ? (
@@ -110,7 +110,7 @@ function Navigation() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.25 5V4.75A2.75 2.75 0 0 0 12.5 2H6.75A2.75 2.75 0 0 0 4 4.75v8.5A2.75 2.75 0 0 0 6.75 16H8" />
               </svg>
             )}
-            <span>{isCopying ? '复制中...' : copySuccess ? '已复制网址' : '复制分享网址'}</span>
+            <span>{isCopying ? '复制中...' : copySuccess ? '已复制邀请链接' : '复制邀请链接'}</span>
           </button>
           {/* 帮助按钮 */}
           <Link
