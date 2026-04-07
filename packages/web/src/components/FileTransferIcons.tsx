@@ -10,6 +10,8 @@ interface TransferStatusIconProps extends IconProps {
   status: string;
 }
 
+type DeviceKind = 'desktop' | 'mobile' | 'generic';
+
 function createIconProps(className?: string) {
   return {
     viewBox: '0 0 24 24',
@@ -123,6 +125,94 @@ export function DeviceIcon({ className }: IconProps) {
       <circle cx="12" cy="17.25" r="0.75" fill="currentColor" stroke="none" />
     </svg>
   );
+}
+
+export function DesktopComputerIcon({ className }: IconProps) {
+  return (
+    <svg {...createIconProps(className)}>
+      <rect x="4.25" y="5" width="15.5" height="10.5" rx="2" />
+      <path d="M9.25 19h5.5" />
+      <path d="M12 15.5V19" />
+      <path d="M7.25 9h9.5" />
+    </svg>
+  );
+}
+
+export function MobilePhoneIcon({ className }: IconProps) {
+  return (
+    <svg {...createIconProps(className)}>
+      <rect x="7.25" y="2.75" width="9.5" height="18.5" rx="2.5" />
+      <path d="M10.5 5.75h3" />
+      <path d="M10.75 18h2.5" />
+      <circle cx="12" cy="15.25" r="0.6" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function getDeviceKindFromName(deviceName?: string): DeviceKind {
+  const normalized = deviceName?.trim().toLowerCase() ?? '';
+
+  if (!normalized) {
+    return 'generic';
+  }
+
+  if (
+    normalized.includes('📱')
+    || normalized.includes('手机')
+    || normalized.includes('iphone')
+    || normalized.includes('android')
+    || normalized.includes('ipad')
+    || normalized.includes('ios')
+    || normalized.includes('mobile')
+  ) {
+    return 'mobile';
+  }
+
+  if (
+    normalized.includes('💻')
+    || normalized.includes('电脑')
+    || normalized.includes('windows')
+    || normalized.includes('mac')
+    || normalized.includes('pc')
+    || normalized.includes('desktop')
+    || normalized.includes('laptop')
+  ) {
+    return 'desktop';
+  }
+
+  return 'generic';
+}
+
+export function getDisplayDeviceName(deviceName?: string): string {
+  const normalized = deviceName?.trim() ?? '';
+  if (!normalized) {
+    return '未知设备';
+  }
+
+  const stripped = normalized
+    .replace(/^[\u{1F4F1}\u{1F4BB}]\s*/u, '')
+    .replace(/^(手机|电脑)[-_ ]*/u, '')
+    .trim();
+
+  return stripped || normalized;
+}
+
+interface DeviceKindIconProps extends IconProps {
+  deviceName?: string;
+}
+
+export function DeviceKindIcon({ deviceName, className }: DeviceKindIconProps) {
+  const deviceKind = getDeviceKindFromName(deviceName);
+
+  if (deviceKind === 'mobile') {
+    return <MobilePhoneIcon className={className} />;
+  }
+
+  if (deviceKind === 'desktop') {
+    return <DesktopComputerIcon className={className} />;
+  }
+
+  return <DeviceIcon className={className} />;
 }
 
 export function TrashIcon({ className }: IconProps) {

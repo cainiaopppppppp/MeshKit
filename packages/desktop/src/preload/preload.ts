@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 应用信息
   getVersion: () => ipcRenderer.invoke('app:getVersion'),
   getPlatform: () => ipcRenderer.invoke('app:getPlatform'),
+  getLocalIPAddresses: () => ipcRenderer.invoke('network:getLocalIPAddresses'),
 
   // 文件对话框
   openFile: () => ipcRenderer.invoke('dialog:openFile'),
@@ -21,6 +22,7 @@ declare global {
     electronAPI: {
       getVersion: () => Promise<string>;
       getPlatform: () => Promise<string>;
+      getLocalIPAddresses: () => Promise<string[]>;
       openFile: () => Promise<string[]>;
       openDirectory: () => Promise<string[]>;
       saveFile: (defaultPath: string) => Promise<string | undefined>;

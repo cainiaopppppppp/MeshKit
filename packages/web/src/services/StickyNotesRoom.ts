@@ -4,6 +4,7 @@
 
 import * as Y from 'yjs';
 import { WebrtcProvider } from 'y-webrtc';
+import { config as appConfig } from '@meshkit/core';
 import type { StickyNote, UserInfo, RoomConfig } from '../types/stickyNote';
 import { encryptionHelper, type EncryptionMethod } from '../utils/Encryption';
 
@@ -68,9 +69,7 @@ export class StickyNotesRoom {
     // 创建 WebRTC Provider
     // 使用本地信令服务器
     try {
-      // 获取本地 IP 地址（从现有的 P2P 配置中）
-      const localIP = window.location.hostname === 'localhost' ? 'localhost' : '10.201.153.15';
-      const signalingUrl = `ws://${localIP}:7000/ws`;
+      const signalingUrl = appConfig.getSignalingURL();
 
       console.log('[StickyNotesRoom] Using local signaling server:', signalingUrl);
 

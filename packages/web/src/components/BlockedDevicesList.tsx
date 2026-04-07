@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import type { BlockedDevice } from '@meshkit/core';
-import { BanIcon, DeviceIcon } from './FileTransferIcons';
+import { BanIcon, DeviceKindIcon, getDisplayDeviceName } from './FileTransferIcons';
 
 interface BlockedDevicesListProps {
   blockedDevices: BlockedDevice[];
@@ -92,9 +92,9 @@ export function BlockedDevicesList({ blockedDevices, onUnblock }: BlockedDevices
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 font-medium text-gray-900 truncate">
                   <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-600">
-                    <DeviceIcon className="h-4 w-4" />
+                    <DeviceKindIcon deviceName={device.deviceName} className="h-4 w-4" />
                   </span>
-                  <span className="truncate">{device.deviceName}</span>
+                  <span className="truncate">{getDisplayDeviceName(device.deviceName)}</span>
                 </div>
                 <div className="text-sm text-gray-600 mt-0.5">
                   剩余: {formatRemainingTime(remainingTimes[device.deviceId] || 0)}

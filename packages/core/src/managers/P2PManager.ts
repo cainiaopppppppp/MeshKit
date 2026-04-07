@@ -39,6 +39,7 @@ export class P2PManager {
       const webrtcConfig = config.get('webrtc');
       const peerjsConfig = config.get('peerjs');
       const signalingConfig = config.get('signalingServer');
+      const resolvedSignalingConfig = config.getResolvedSignalingServer();
 
       // 根据配置选择PeerJS服务器
       const peerOptions: any = {
@@ -55,10 +56,9 @@ export class P2PManager {
       }
       // 优先级2: 动态获取当前访问的hostname（浏览器环境）
       else if (peerjsConfig?.port && typeof window !== 'undefined') {
-        const hostname = window.location.hostname;
-        console.log('[P2PManager] Using local PeerJS server:', `${hostname}:${peerjsConfig.port}`);
-        peerOptions.host = hostname;
-        peerOptions.port = peerjsConfig.port;
+        console.log('[P2PManager] Using resolved PeerJS server:', `${resolvedSignalingConfig.host}:${resolvedSignalingConfig.peerPort}`);
+        peerOptions.host = resolvedSignalingConfig.host;
+        peerOptions.port = resolvedSignalingConfig.peerPort;
         peerOptions.path = peerjsConfig.path || '/';
       }
       // 优先级3: 使用配置文件中的固定host（兼容旧配置）

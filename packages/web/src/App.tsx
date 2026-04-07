@@ -2,21 +2,116 @@
  * MeshKit - 主应用入口，支持多页面路由
  */
 
+import { useState } from 'react';
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { FileTransferPage } from './pages/FileTransferPage';
 import { StickyNotesPage } from './pages/StickyNotesPage';
 import { EncryptedChatPage } from './pages/EncryptedChatPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { HelpPage } from './pages/HelpPage';
+import { getShareableWebUrl } from './utils/signalingConfig';
+
+async function copyTextWithFallback(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (error) {
+      console.warn('[Navigation] navigator.clipboard failed, trying fallback copy:', error);
+    }
+  }
+
+  const textArea = document.createElement('textarea');
+  textArea.value = text;
+  textArea.setAttribute('readonly', 'true');
+  textArea.style.position = 'fixed';
+  textArea.style.top = '0';
+  textArea.style.left = '-9999px';
+  textArea.style.opacity = '0';
+  document.body.appendChild(textArea);
+
+  const selection = document.getSelection();
+  const previousRange = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+
+  textArea.focus();
+  textArea.select();
+  textArea.setSelectionRange(0, text.length);
+
+  let copied = false;
+
+  try {
+    copied = document.execCommand('copy');
+  } catch (error) {
+    console.warn('[Navigation] document.execCommand copy failed:', error);
+    copied = false;
+  }
+
+  document.body.removeChild(textArea);
+
+  if (selection) {
+    selection.removeAllRanges();
+    if (previousRange) {
+      selection.addRange(previousRange);
+    }
+  }
+
+  return copied;
+}
 
 function Navigation() {
   const location = useLocation();
+  const [isCopying, setIsCopying] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
+
+  const copyShareUrl = async () => {
+    setIsCopying(true);
+
+    try {
+      const result = await getShareableWebUrl('/');
+      const copied = await copyTextWithFallback(result.url);
+
+      if (!copied) {
+        window.prompt('复制失败，请手动复制下面的网址：', result.url);
+        return;
+      }
+
+      setCopySuccess(true);
+      window.setTimeout(() => setCopySuccess(false), 2200);
+    } catch (error) {
+      console.error('[Navigation] Failed to copy share URL:', error);
+      alert('获取分享网址失败，请刷新页面后重试。');
+    } finally {
+      setIsCopying(false);
+    }
+  };
 
   return (
     <nav className="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-gray-200 px-4 sm:px-6 py-4 relative">
       <div className="max-w-7xl mx-auto">
         {/* 右上角按钮组 */}
         <div className="absolute right-4 top-4 flex gap-2">
+          <button
+            onClick={copyShareUrl}
+            className={`inline-flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-all ${
+              copySuccess
+                ? 'bg-green-500 text-white shadow-md'
+                : 'bg-white/70 text-gray-700 hover:bg-white hover:shadow-md'
+            }`}
+            title="复制分享网址"
+            disabled={isCopying}
+          >
+            {copySuccess ? (
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="m5 13 4 4L19 7" />
+              </svg>
+            ) : (
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.75 7.75A2.75 2.75 0 0 1 11.5 5h5.75A2.75 2.75 0 0 1 20 7.75v8.5A2.75 2.75 0 0 1 17.25 19h-5.75a2.75 2.75 0 0 1-2.75-2.75v-8.5Z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.25 5V4.75A2.75 2.75 0 0 0 12.5 2H6.75A2.75 2.75 0 0 0 4 4.75v8.5A2.75 2.75 0 0 0 6.75 16H8" />
+              </svg>
+            )}
+            <span>{isCopying ? '复制中...' : copySuccess ? '已复制网址' : '复制分享网址'}</span>
+          </button>
           {/* 帮助按钮 */}
           <Link
             to="/help"

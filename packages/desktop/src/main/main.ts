@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron';
 import { join } from 'path';
+import { networkInterfaces } from 'os';
 import { autoUpdater } from 'electron-updater';
 
 // 禁用硬件加速（可选，解决某些平台的渲染问题）
@@ -8,6 +9,58 @@ import { autoUpdater } from 'electron-updater';
 let mainWindow: BrowserWindow | null = null;
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+const rendererDevUrl = 'http://127.0.0.1:5173';
+
+function isPrivateIPv4(address: string): boolean {
+  if (/^10\.\d+\.\d+\.\d+$/.test(address)) {
+    return true;
+  }
+
+  if (/^192\.168\.\d+\.\d+$/.test(address)) {
+    return true;
+  }
+
+  const match = address.match(/^172\.(\d+)\.\d+\.\d+$/);
+  if (!match) {
+    return false;
+  }
+
+  const secondOctet = Number.parseInt(match[1], 10);
+  return secondOctet >= 16 && secondOctet <= 31;
+}
+
+function isLikelyVirtualAdapter(name: string): boolean {
+  return /vmware|virtualbox|hyper-v|vethernet|default switch|vmnet|docker|wsl|tailscale|zerotier|wireguard|bluetooth/i.test(name);
+}
+
+function getAdapterPriority(name: string, address: string): number {
+  let score = 100;
+  const normalized = name.toLowerCase();
+
+  if (normalized.includes('wlan') || normalized.includes('wi-fi') || normalized.includes('wifi') || normalized.includes('无线')) {
+    score -= 40;
+  } else if (normalized.includes('ethernet') || normalized.includes('以太网')) {
+    score -= 30;
+  }
+
+  if (isPrivateIPv4(address)) {
+    score -= 20;
+  }
+
+  if (address.startsWith('192.168.')) {
+    score -= 8;
+  } else if (address.startsWith('10.')) {
+    score -= 6;
+  } else if (address.startsWith('172.')) {
+    score -= 4;
+  }
+
+  if (isLikelyVirtualAdapter(name)) {
+    score += 100;
+  }
+
+  return score;
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -34,7 +87,7 @@ function createWindow() {
   // 加载应用
   if (isDev) {
     // 开发模式：加载 Vite 开发服务器
-    mainWindow.loadURL('http://localhost:5173');
+    mainWindow.loadURL(rendererDevUrl);
     // 打开开发者工具
     mainWindow.webContents.openDevTools();
   } else {
@@ -155,6 +208,32 @@ ipcMain.handle('app:getVersion', () => {
 
 ipcMain.handle('app:getPlatform', () => {
   return process.platform;
+});
+
+ipcMain.handle('network:getLocalIPAddresses', () => {
+  const interfaces = networkInterfaces();
+  const candidates: Array<{ name: string; address: string }> = [];
+
+  for (const [name, group] of Object.entries(interfaces)) {
+    if (!group) continue;
+
+    for (const info of group) {
+      if (info.family === 'IPv4' && !info.internal) {
+        candidates.push({
+          name,
+          address: info.address,
+        });
+      }
+    }
+  }
+
+  const sortedCandidates = candidates
+    .sort((a, b) => getAdapterPriority(a.name, a.address) - getAdapterPriority(b.name, b.address));
+
+  const physicalCandidates = sortedCandidates.filter((item) => !isLikelyVirtualAdapter(item.name));
+  const preferredCandidates = physicalCandidates.length > 0 ? physicalCandidates : sortedCandidates;
+
+  return Array.from(new Set(preferredCandidates.map((item) => item.address)));
 });
 
 // 文件选择对话框

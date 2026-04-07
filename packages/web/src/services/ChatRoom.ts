@@ -6,7 +6,7 @@
 
 import * as Y from 'yjs';
 import { WebrtcProvider } from 'y-webrtc';
-import { eventBus } from '@meshkit/core';
+import { config as appConfig, eventBus } from '@meshkit/core';
 import { chatCrypto, type EncryptionMethod } from '../utils/ChatCrypto';
 import { chatStorage } from '../utils/ChatStorage';
 import {
@@ -121,8 +121,7 @@ export class ChatRoom {
     this.ydoc = new Y.Doc();
 
     // 创建 WebRTC Provider（使用本地信令服务器）
-    const localIP = window.location.hostname === 'localhost' ? 'localhost' : window.location.hostname;
-    const signalingUrl = `ws://${localIP}:7000/ws`;
+    const signalingUrl = appConfig.getSignalingURL();
 
     console.log('[ChatRoom] Using signaling server:', signalingUrl);
 

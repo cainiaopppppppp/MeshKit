@@ -30,7 +30,6 @@ class Config {
       },
       // 信令服务器配置 - 用户可自定义
       signalingServer: {
-        host: 'localhost',  // 默认本地，用户可在设置中修改
         wsPort: 7000,  // WebSocket 信令端口
         peerPort: 8000,  // PeerJS 端口
       },
@@ -54,6 +53,24 @@ class Config {
         clipboard: false,
       },
     };
+  }
+
+  private isLoopbackHost(host?: string): boolean {
+    if (!host) return false;
+    return ['localhost', '127.0.0.1', '::1'].includes(host.trim().toLowerCase());
+  }
+
+  private getRuntimeHost(): string | undefined {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const hostname = window.location.hostname?.trim();
+    if (!hostname || hostname === '0.0.0.0') {
+      return undefined;
+    }
+
+    return hostname;
   }
 
   /**
@@ -144,22 +161,33 @@ class Config {
   }
 
   /**
+   * 获取运行时解析后的信令服务器配置
+   */
+  getResolvedSignalingServer(): { host: string; wsPort: number; peerPort: number } {
+    const signalingConfig = this.get('signalingServer');
+    const runtimeHost = this.getRuntimeHost();
+    const configuredHost = signalingConfig?.host?.trim();
+
+    let host = configuredHost || runtimeHost || 'localhost';
+
+    // 当网页是通过局域网地址访问时，默认的 localhost 配置应自动切换到当前访问地址。
+    if (runtimeHost && configuredHost && this.isLoopbackHost(configuredHost) && !this.isLoopbackHost(runtimeHost)) {
+      host = runtimeHost;
+    }
+
+    return {
+      host,
+      wsPort: signalingConfig?.wsPort || 7000,
+      peerPort: signalingConfig?.peerPort || 8000,
+    };
+  }
+
+  /**
    * 获取信令服务器 WebSocket URL
    */
   getSignalingURL(): string {
-    const signalingConfig = this.get('signalingServer');
-
-    if (signalingConfig?.host && signalingConfig?.wsPort) {
-      return `ws://${signalingConfig.host}:${signalingConfig.wsPort}/ws`;
-    }
-
-    // 降级：使用 window.location.hostname (浏览器环境)
-    if (typeof window !== 'undefined') {
-      return `ws://${window.location.hostname}:7000/ws`;
-    }
-
-    // 默认值
-    return 'ws://localhost:7000/ws';
+    const signalingConfig = this.getResolvedSignalingServer();
+    return `ws://${signalingConfig.host}:${signalingConfig.wsPort}/ws`;
   }
 }
 

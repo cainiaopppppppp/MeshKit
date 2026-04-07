@@ -1,201 +1,103 @@
-/**
- * 帮助页面 - 用户使用指南
- */
-
 import { useState } from 'react';
+import {
+  DesktopComputerIcon,
+  InfoIcon,
+  MobilePhoneIcon,
+  ShieldLockIcon,
+  TransferInboxIcon,
+} from '../components/FileTransferIcons';
 
 interface FAQItem {
   question: string;
   answer: string | string[];
 }
 
-const faqData: { category: string; items: FAQItem[] }[] = [
+interface FAQSectionData {
+  category: string;
+  items: FAQItem[];
+}
+
+const faqData: FAQSectionData[] = [
   {
-    category: '🚀 文件传输',
+    category: '文件传输',
     items: [
       {
         question: '如何发送文件？',
         answer: [
-          '1. 点击顶部"文件传输"标签',
-          '2. 切换到"📤 发送"模式',
-          '3. 点击或拖拽文件到选择区域',
-          '4. 在设备列表中选择接收设备',
-          '5. 点击"发送文件"按钮',
+          '1. 打开“文件传输”页面。',
+          '2. 选择发送模式并选中文件。',
+          '3. 在设备列表中选择接收方。',
+          '4. 点击发送并等待对方确认。',
         ],
       },
       {
         question: '如何接收文件？',
         answer: [
-          '1. 点击"文件传输"标签',
-          '2. 切换到"📥 接收"模式',
-          '3. 等待文件传输',
-          '4. 传输完成后点击"下载文件"',
+          '1. 保持页面打开并连接同一局域网。',
+          '2. 等待发送方发起请求。',
+          '3. 在弹窗里确认接收。',
+          '4. 传输完成后保存文件。',
         ],
-      },
-      {
-        question: '支持多大的文件？',
-        answer: '支持 1GB+ 大文件，理论上无限制。系统使用流式传输，不会占用过多内存。',
-      },
-      {
-        question: '传输速度有多快？',
-        answer: '局域网内通常可达 20-50 MB/s，具体取决于 WiFi 质量。5GHz WiFi 比 2.4GHz 快很多。',
       },
       {
         question: '文件传输安全吗？',
         answer: [
-          '✅ 安全！使用 WebRTC DTLS/SRTP 传输层加密',
-          '🔒 加密算法：AES-GCM (128-256位)',
-          '🛡️ 完美前向保密 (PFS)：每次连接新密钥',
-          '✅ 防中间人攻击，防窃听',
-          '🚫 文件不经过服务器，直接 P2P 传输',
-          '📌 注意：传输层加密，未来将支持端到端文件加密',
-        ],
-      },
-      {
-        question: 'iOS Safari 如何下载文件？',
-        answer: [
-          '1. 点击"下载文件"，会打开新标签页',
-          '2. **长按**显示的文件（重要！）',
-          '3. 选择"存储到文件"或"添加到照片"',
-          '4. 选择保存位置（如 iCloud 云盘）',
+          '传输链路使用 WebRTC 加密。',
+          '文件默认不经过中心服务器，只在设备之间点对点传输。',
+          '如果需要更高隐私，建议在可信局域网中使用。',
         ],
       },
     ],
   },
   {
-    category: '📝 便签墙',
+    category: '便签墙',
     items: [
       {
-        question: '如何创建便签？',
-        answer: [
-          '1. 点击顶部"便签墙"标签',
-          '2. 点击"+ 添加便签"按钮',
-          '3. 输入内容并选择颜色',
-          '4. 点击"保存"',
-        ],
+        question: '便签会自动同步吗？',
+        answer: '会。连接同一房间的设备会实时同步新增、编辑和删除操作。',
       },
       {
-        question: '如何编辑或删除便签？',
-        answer: [
-          '编辑：点击便签 → 修改内容 → 保存',
-          '删除：点击便签 → 点击"删除"按钮',
-          '移动：按住便签拖动到目标位置',
-        ],
-      },
-      {
-        question: '便签如何同步？',
-        answer: '所有设备的便签自动实时同步。任何设备创建、编辑、删除便签，其他设备立即看到变化。',
-      },
-      {
-        question: '离线可以用吗？',
-        answer: '可以。离线时仍可编辑便签，重新联网后会自动同步。',
-      },
-      {
-        question: '数据会丢失吗？',
-        answer: '不会。便签保存在浏览器本地存储（IndexedDB），刷新页面后仍然存在。',
+        question: '离线后还能编辑吗？',
+        answer: '可以。重新联网后，变更会继续同步到其他设备。',
       },
     ],
   },
   {
-    category: '🔐 加密聊天',
+    category: '加密聊天',
     items: [
       {
-        question: '如何开始聊天？',
-        answer: [
-          '1. 点击顶部"加密聊天"标签',
-          '2. 在设备列表中选择聊天对象',
-          '3. 等待连接建立（自动交换密钥）',
-          '4. 输入消息并发送',
-        ],
+        question: '聊天内容会被保存吗？',
+        answer: '默认不会长期保存。刷新页面或重新进入房间后，历史消息可能被清空。',
       },
       {
-        question: '真的安全吗？',
-        answer: [
-          '✅ 是的，非常安全！采用军事级端到端加密 (E2EE)',
-          '🔐 加密库：libsodium (NaCl)',
-          '🔑 密钥强度：256位（当前技术无法破解）',
-          '🛡️ 加密算法：XSalsa20 + Poly1305',
-          '✅ 完美前向保密：每次连接新密钥',
-          '✅ 防护：防窃听、防篡改、防重放',
-          '🚫 服务器无法解密，数据不上传',
-        ],
-      },
-      {
-        question: '消息会保存吗？',
-        answer: '不会。为了隐私，消息不会保存。刷新页面后聊天记录清空。',
-      },
-      {
-        question: '密钥如何交换？',
-        answer: '使用 ECDH 密钥协商算法，在建立连接时自动完成。每次重连都会生成新密钥。',
+        question: '房间密码有什么作用？',
+        answer: '房间密码会限制新成员加入，避免同一局域网下的其他人误入聊天。',
       },
     ],
   },
   {
-    category: '⚙️ 设置与配置',
+    category: '设置与连接',
     items: [
       {
-        question: '如何配置信令服务器？',
-        answer: [
-          '1. 点击右上角⚙️图标进入设置',
-          '2. 填入服务器地址和端口',
-          '3. 点击"保存配置"',
-          '4. 刷新页面（Web）或重启应用（Desktop）',
-        ],
+        question: '为什么需要配置信令服务器？',
+        answer: '本机测试时可用 localhost。多设备协作时，需要让其他设备知道哪台电脑在运行信令服务。',
       },
       {
-        question: '为什么需要配置服务器？',
-        answer: '默认使用 localhost，只适合本机测试。要在局域网多台电脑使用，需要配置一台电脑的 IP 作为信令服务器。',
-      },
-      {
-        question: '如何查看本机 IP？',
+        question: '手机和电脑怎么互联？',
         answer: [
-          'Windows: 命令行运行 ipconfig',
-          'Mac: 命令行运行 ifconfig',
-          'Linux: 命令行运行 ip addr 或 ifconfig',
-          '查找 192.168.x.x 或 10.0.x.x 格式的地址',
+          '1. 先在电脑上运行信令服务。',
+          '2. 再运行 Web 页面。',
+          '3. 手机和电脑连接同一 Wi-Fi。',
+          '4. 手机浏览器打开 http://[电脑IP]:3000。',
         ],
       },
-    ],
-  },
-  {
-    category: '❓ 常见问题',
-    items: [
       {
         question: '看不到其他设备怎么办？',
         answer: [
-          '1. 确认所有设备连接同一 WiFi',
-          '2. 检查信令服务器是否运行',
-          '3. 刷新页面或重启应用',
-          '4. 检查防火墙设置',
-        ],
-      },
-      {
-        question: '传输速度很慢怎么办？',
-        answer: [
-          '1. 使用 5GHz WiFi（比 2.4GHz 快很多）',
-          '2. 靠近路由器',
-          '3. 减少其他设备的网络使用',
-          '4. 关闭 VPN 或代理',
-          '5. 使用有线连接（如果可能）',
-        ],
-      },
-      {
-        question: '手机和电脑无法连接？',
-        answer: [
-          '1. 确认连接同一 WiFi',
-          '2. 手机浏览器访问：http://[电脑IP]:3000',
-          '3. 检查电脑防火墙是否开放端口',
-          '4. 确认信令服务器正在运行',
-        ],
-      },
-      {
-        question: '传输中断怎么办？',
-        answer: [
-          '1. 检查网络连接',
-          '2. 确认对方设备在线',
-          '3. 保持屏幕唤醒',
-          '4. 关闭省电模式',
-          '5. 重新发送文件',
+          '确认所有设备在同一局域网。',
+          '检查电脑防火墙是否放行相关端口。',
+          '确认设置页中的信令地址正确。',
+          '刷新页面或重新打开应用后重试。',
         ],
       },
     ],
@@ -204,70 +106,53 @@ const faqData: { category: string; items: FAQItem[] }[] = [
 
 const usageTips = [
   {
-    title: '📁 批量传输',
-    tip: '一次选择多个文件更高效。按住 Ctrl/Cmd 多选，或直接拖拽多个文件。',
+    title: '批量传输',
+    tip: '一次选择多个文件通常比逐个发送更高效。',
   },
   {
-    title: '🎨 便签颜色',
-    tip: '用不同颜色区分类别。例如：黄色=想法，绿色=任务，红色=重要。',
+    title: '5GHz Wi-Fi',
+    tip: '如果路由器支持，5GHz 通常比 2.4GHz 更适合大文件传输。',
   },
   {
-    title: '🚀 5GHz WiFi',
-    tip: '5GHz WiFi 比 2.4GHz 快 3-5 倍。如果路由器支持，优先使用 5GHz。',
+    title: '保持常亮',
+    tip: '传输大文件时尽量避免设备熄屏或进入省电模式。',
   },
   {
-    title: '💾 大文件传输',
-    tip: '传输大文件时保持屏幕唤醒，关闭省电模式，避免传输中断。',
-  },
-  {
-    title: '👥 团队协作',
-    tip: '便签墙中每人用固定颜色，方便识别谁创建的便签。',
-  },
-  {
-    title: '🔐 敏感信息',
-    tip: '传递密码等敏感信息时使用加密聊天，刷新页面后消息自动清空。',
+    title: '分享链接',
+    tip: '优先使用应用里的“复制分享网址”或“复制邀请链接”，能减少手填 IP 出错。',
   },
 ];
 
-function FAQSection({ category, items }: { category: string; items: FAQItem[] }) {
-  const [openIndex, setOpenIndex] = useState<number | null>(null);
+function FAQSection({ category, items }: FAQSectionData) {
+  const [openIndex, setOpenIndex] = useState<number | null>(0);
 
   return (
-    <div className="mb-8">
-      <h2 className="text-xl font-bold text-gray-800 mb-4">{category}</h2>
+    <section className="mb-8">
+      <h2 className="mb-4 text-xl font-bold text-gray-800">{category}</h2>
       <div className="space-y-2">
         {items.map((item, index) => (
-          <div
-            key={index}
-            className="border border-gray-200 rounded-lg overflow-hidden bg-white"
-          >
+          <div key={item.question} className="overflow-hidden rounded-lg border border-gray-200 bg-white">
             <button
               onClick={() => setOpenIndex(openIndex === index ? null : index)}
-              className="w-full px-4 py-3 text-left flex items-center justify-between hover:bg-gray-50 transition-colors"
+              className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-gray-50"
             >
               <span className="font-medium text-gray-800">{item.question}</span>
               <svg
-                className={`w-5 h-5 text-gray-500 transition-transform ${
-                  openIndex === index ? 'transform rotate-180' : ''
-                }`}
+                className={`h-5 w-5 text-gray-500 transition-transform ${openIndex === index ? 'rotate-180' : ''}`}
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M19 9l-7 7-7-7"
-                />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
               </svg>
             </button>
+
             {openIndex === index && (
-              <div className="px-4 py-3 bg-gray-50 border-t border-gray-200">
+              <div className="border-t border-gray-200 bg-gray-50 px-4 py-3">
                 {Array.isArray(item.answer) ? (
                   <ol className="space-y-1 text-gray-700">
-                    {item.answer.map((line, i) => (
-                      <li key={i}>{line}</li>
+                    {item.answer.map((line) => (
+                      <li key={line}>{line}</li>
                     ))}
                   </ol>
                 ) : (
@@ -278,157 +163,128 @@ function FAQSection({ category, items }: { category: string; items: FAQItem[] })
           </div>
         ))}
       </div>
-    </div>
+    </section>
   );
 }
 
 export function HelpPage() {
   return (
-    <div className="max-w-4xl mx-auto p-6">
-      {/* 头部 */}
+    <div className="mx-auto max-w-4xl p-6">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">📖 使用帮助</h1>
+        <h1 className="mb-2 text-3xl font-bold text-gray-900">使用帮助</h1>
         <p className="text-gray-600">
-          MeshKit 使用指南 - 安全的 P2P 协作工具，提供加密文件传输、便签墙、端到端加密聊天
+          MeshKit 是一个面向局域网协作的 P2P 工具，支持文件传输、便签墙和加密聊天。
         </p>
-        <div className="mt-3 flex gap-2 flex-wrap">
-          <span className="px-3 py-1 bg-green-100 text-green-800 text-sm rounded-full">
-            🔐 端到端加密
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          <span className="inline-flex items-center gap-2 rounded-full bg-green-100 px-3 py-1 text-sm text-green-800">
+            <ShieldLockIcon className="h-4 w-4" />
+            端到端保护
           </span>
-          <span className="px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full">
-            🛡️ 256位密钥
+          <span className="inline-flex items-center gap-2 rounded-full bg-blue-100 px-3 py-1 text-sm text-blue-800">
+            <TransferInboxIcon className="h-4 w-4" />
+            局域网直连
           </span>
-          <span className="px-3 py-1 bg-purple-100 text-purple-800 text-sm rounded-full">
-            🚫 零服务器存储
+          <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-700">
+            <InfoIcon className="h-4 w-4" />
+            零账号即可用
           </span>
         </div>
       </div>
 
-      {/* 快速入门 */}
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-6 mb-8 border border-blue-200">
-        <h2 className="text-xl font-bold text-gray-800 mb-3">🚀 快速入门</h2>
+      <section className="mb-8 rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 p-6">
+        <h2 className="mb-3 text-xl font-bold text-gray-800">快速上手</h2>
         <div className="space-y-2 text-gray-700">
-          <p><strong>第一步：</strong>确保所有设备连接到同一 WiFi 网络</p>
-          <p><strong>第二步：</strong>等待设备自动发现（通常几秒钟）</p>
-          <p><strong>第三步：</strong>选择要使用的功能开始协作</p>
+          <p><strong>第一步：</strong>确保所有设备连接到同一 Wi-Fi。</p>
+          <p><strong>第二步：</strong>在电脑上启动信令服务和 Web 页面。</p>
+          <p><strong>第三步：</strong>让其他设备通过分享链接或电脑 IP 进入网页。</p>
         </div>
-        <div className="mt-4 p-3 bg-white rounded border border-blue-200">
-          <p className="text-sm text-gray-600">
-            💡 <strong>提示：</strong>手机访问请使用浏览器打开{' '}
-            <code className="bg-gray-100 px-2 py-0.5 rounded text-xs">
-              http://[电脑IP]:3000
-            </code>
-          </p>
-        </div>
-      </div>
 
-      {/* FAQ 部分 */}
-      {faqData.map((section, index) => (
-        <FAQSection key={index} category={section.category} items={section.items} />
+        <div className="mt-4 rounded-xl border border-blue-200 bg-white p-4">
+          <div className="grid gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+            <div className="flex items-center gap-3 rounded-xl bg-slate-50 px-3 py-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+                <DesktopComputerIcon className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="text-sm font-semibold text-gray-900">电脑</div>
+                <div className="text-xs text-gray-500">运行 `pnpm dev:web` 并提供网页入口</div>
+              </div>
+            </div>
+
+            <div className="hidden text-center text-blue-300 sm:block">
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 12h14m-4-4 4 4-4 4" />
+              </svg>
+            </div>
+
+            <div className="flex items-center gap-3 rounded-xl bg-blue-50 px-3 py-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-sky-100 text-sky-700">
+                <MobilePhoneIcon className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="text-sm font-semibold text-gray-900">手机</div>
+                <div className="text-xs text-gray-500">浏览器打开分享链接或 `http://[电脑IP]:3000`</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {faqData.map((section) => (
+        <FAQSection key={section.category} category={section.category} items={section.items} />
       ))}
 
-      {/* 使用技巧 */}
-      <div className="mb-8">
-        <h2 className="text-xl font-bold text-gray-800 mb-4">💡 使用技巧</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {usageTips.map((tip, index) => (
-            <div
-              key={index}
-              className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
-            >
-              <h3 className="font-semibold text-gray-800 mb-2">{tip.title}</h3>
+      <section className="mb-8">
+        <h2 className="mb-4 text-xl font-bold text-gray-800">使用技巧</h2>
+        <div className="grid gap-4 md:grid-cols-2">
+          {usageTips.map((tip) => (
+            <div key={tip.title} className="rounded-lg border border-gray-200 bg-white p-4 transition-shadow hover:shadow-md">
+              <h3 className="mb-2 font-semibold text-gray-800">{tip.title}</h3>
               <p className="text-sm text-gray-600">{tip.tip}</p>
             </div>
           ))}
         </div>
-      </div>
+      </section>
 
-      {/* 获取更多帮助 */}
-      <div className="bg-gray-50 rounded-lg p-6 border border-gray-200">
-        <h2 className="text-xl font-bold text-gray-800 mb-4">🙋 需要更多帮助？</h2>
-        <div className="space-y-3">
-          <div className="flex items-start gap-3">
-            <span className="text-2xl">📚</span>
-            <div>
-              <h3 className="font-semibold text-gray-800">完整文档</h3>
-              <p className="text-sm text-gray-600">
-                查看{' '}
-                <a
-                  href="https://github.com/cainiaopppppppp/MeshKit/tree/main/docs"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-600 hover:underline"
-                >
-                  完整用户手册
-                </a>{' '}
-                了解更多详细信息
-              </p>
-            </div>
-          </div>
-          <div className="flex items-start gap-3">
-            <span className="text-2xl">🐛</span>
-            <div>
-              <h3 className="font-semibold text-gray-800">报告问题</h3>
-              <p className="text-sm text-gray-600">
-                遇到 Bug？在{' '}
-                <a
-                  href="https://github.com/cainiaopppppppp/MeshKit/issues"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-600 hover:underline"
-                >
-                  GitHub Issues
-                </a>{' '}
-                提交问题
-              </p>
-            </div>
-          </div>
-          <div className="flex items-start gap-3">
-            <span className="text-2xl">💬</span>
-            <div>
-              <h3 className="font-semibold text-gray-800">功能建议</h3>
-              <p className="text-sm text-gray-600">
-                有好的想法？在{' '}
-                <a
-                  href="https://github.com/cainiaopppppppp/MeshKit/discussions"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-600 hover:underline"
-                >
-                  GitHub Discussions
-                </a>{' '}
-                分享
-              </p>
-            </div>
-          </div>
+      <section className="rounded-xl border border-gray-200 bg-gray-50 p-6">
+        <h2 className="mb-4 text-xl font-bold text-gray-800">更多帮助</h2>
+        <div className="space-y-3 text-sm text-gray-600">
+          <p>
+            文档：{' '}
+            <a
+              href="https://github.com/cainiaopppppppp/MeshKit/tree/main/docs"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:underline"
+            >
+              查看 docs 目录
+            </a>
+          </p>
+          <p>
+            问题反馈：{' '}
+            <a
+              href="https://github.com/cainiaopppppppp/MeshKit/issues"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:underline"
+            >
+              GitHub Issues
+            </a>
+          </p>
+          <p>
+            功能建议：{' '}
+            <a
+              href="https://github.com/cainiaopppppppp/MeshKit/discussions"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:underline"
+            >
+              GitHub Discussions
+            </a>
+          </p>
         </div>
-      </div>
-
-      {/* 页脚 */}
-      <div className="mt-8 text-center text-sm text-gray-500">
-        <p>
-          Made with ❤️ for seamless P2P collaboration
-        </p>
-        <p className="mt-1">
-          <a
-            href="https://github.com/cainiaopppppppp/MeshKit"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-600 hover:underline"
-          >
-            GitHub
-          </a>
-          {' · '}
-          <a
-            href="https://github.com/cainiaopppppppp/MeshKit/blob/main/LICENSE"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-600 hover:underline"
-          >
-            MIT License
-          </a>
-        </p>
-      </div>
+      </section>
     </div>
   );
 }

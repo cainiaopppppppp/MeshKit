@@ -8,9 +8,11 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
 import './formControls.css';
+import { applySharedSignalingConfigFromUrl } from './utils/signalingConfig';
 
 // 初始化错误抑制器
 initErrorSuppressor();
+applySharedSignalingConfigFromUrl();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

@@ -26,6 +26,7 @@ import { ReceiveRequestDialog } from '../components/ReceiveRequestDialog';
 import { FileListRequestDialog } from '../components/FileListRequestDialog';
 import { PasswordInputDialog } from '../components/PasswordInputDialog';
 import { BlockedDevicesList } from '../components/BlockedDevicesList';
+import { DeviceKindIcon, getDisplayDeviceName } from '../components/FileTransferIcons';
 
 // 播放通知提示音
 const playNotificationSound = () => {
@@ -755,6 +756,8 @@ export function FileTransferPage() {
     };
   }, [devices]);
 
+  const displayedMyDeviceName = getDisplayDeviceName(myDeviceName || '');
+
   // 加载被屏蔽设备列表
   useEffect(() => {
     const updateBlockedDevices = () => {
@@ -859,11 +862,16 @@ export function FileTransferPage() {
         {/* 设备名称 */}
         <div className="mb-6">
           <div className="relative">
+            <div className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white">
+                <DeviceKindIcon deviceName={myDeviceName || ''} className="h-4 w-4" />
+              </span>
+            </div>
             <input
               type="text"
-              value={myDeviceName || ''}
+              value={displayedMyDeviceName}
               readOnly
-              className="w-full px-4 py-3 pr-12 border border-gray-200 rounded-lg bg-gray-50 text-sm focus:outline-none"
+              className="w-full border border-gray-200 rounded-lg bg-gray-50 py-3 pl-14 pr-12 text-sm focus:outline-none"
               placeholder="设备名称"
             />
             <button
@@ -1094,7 +1102,21 @@ export function FileTransferPage() {
                               : 'border-gray-300 hover:border-gray-400'
                           }`}
                         >
-                          <span className="font-medium text-gray-900">{device.name}</span>
+                          <span className={`mr-3 flex h-10 w-10 items-center justify-center rounded-xl border ${
+                            selectedDeviceId === device.id
+                              ? 'border-blue-200 bg-white text-blue-600'
+                              : 'border-gray-200 bg-gray-50 text-gray-600'
+                          }`}>
+                            <DeviceKindIcon deviceName={device.name} className="h-5 w-5" />
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate font-medium text-gray-900">
+                              {getDisplayDeviceName(device.name)}
+                            </div>
+                            <div className="mt-0.5 text-xs text-gray-500">
+                              设备已在线
+                            </div>
+                          </div>
                         </div>
                       ))}
                     </div>
