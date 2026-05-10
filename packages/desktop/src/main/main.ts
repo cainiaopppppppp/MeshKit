@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 import { join } from 'node:path';
 
@@ -58,6 +59,16 @@ let discoveryStatus: ShareDiscoveryStatus = {
 
 function getShareWebRootDir(): string {
   return join(__dirname, '../web-share');
+}
+
+function getWindowIconPath(): string | undefined {
+  const candidates = [
+    join(__dirname, '../../build/icon.png'),
+    join(process.resourcesPath, 'build/icon.png'),
+    join(process.resourcesPath, 'icon.png'),
+  ];
+
+  return candidates.find((candidate) => existsSync(candidate));
 }
 
 function getDiscoveredShares(): DiscoveredShare[] {
@@ -190,6 +201,8 @@ async function restartEmbeddedServices() {
 }
 
 function createWindow() {
+  const windowIcon = getWindowIconPath();
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -203,6 +216,7 @@ function createWindow() {
       sandbox: false,
       webSecurity: true,
     },
+    icon: windowIcon,
     show: false,
   });
 

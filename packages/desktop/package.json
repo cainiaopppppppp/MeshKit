@@ -1,6 +1,6 @@
 {
   "name": "@meshkit/desktop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MeshKit 桌面应用 - Electron",
   "main": "dist/main/main.js",
   "private": true,

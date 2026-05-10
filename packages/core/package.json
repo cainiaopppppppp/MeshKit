@@ -1,6 +1,6 @@
 {
   "name": "@meshkit/core",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MeshKit Core - MeshDrop 文件快传核心逻辑 - 跨平台共享",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
