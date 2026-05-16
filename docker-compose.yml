@@ -1,48 +1,53 @@
-version: '3.8'
+name: meshkit
 
 services:
-  # 信令服务器
   signaling:
+    image: meshkit-signaling:1.1.0
     build:
       context: .
       dockerfile: apps/signaling/Dockerfile
     container_name: meshkit-signaling
-    ports:
-      - "7000:7000"  # WebSocket 端口
-      - "8000:8000"  # PeerJS 端口
     environment:
-      - NODE_ENV=production
-      - WS_PORT=7000
-      - PEER_PORT=8000
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      WS_PORT: 7000
+      PEER_PORT: 8000
+      DEVICE_STALE_TIME: 45000
+      ROOM_STALE_TIME: 3600000
+      CLEANUP_INTERVAL: 5000
+    ports:
+      - "7000:7000"
+      - "8000:8000"
     restart: unless-stopped
-    networks:
-      - meshkit-network
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8000/"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:7000/healthz && wget -q -O /dev/null http://127.0.0.1:8000/healthz"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 15s
+    networks:
+      - meshkit-network
 
-  # Web 应用
   web:
+    image: meshkit-web:1.1.0
     build:
       context: .
       dockerfile: packages/web/Dockerfile
     container_name: meshkit-web
-    ports:
-      - "3000:80"  # 将容器的 80 端口映射到主机的 3000 端口
     depends_on:
-      - signaling
+      signaling:
+        condition: service_healthy
+    ports:
+      - "3000:80"
     restart: unless-stopped
-    networks:
-      - meshkit-network
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+    networks:
+      - meshkit-network
 
 networks:
   meshkit-network:

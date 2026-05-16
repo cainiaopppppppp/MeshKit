@@ -108,11 +108,11 @@ function getShareableHosts() {
 }
 
 function color(text, code) {
-  return `\u001b[${code}m${text}\u001b[0m`;
+  return `[${code}m${text}[0m`;
 }
 
 function stripAnsi(text) {
-  return text.replace(/\u001b\[[0-9;]*m/g, '');
+  return text.replace(/\[[0-9;]*m/g, '');
 }
 
 function printBanner(port, readyLine) {
