@@ -13,6 +13,7 @@ import {
 
 class ChatStorageManager {
   private readonly STORAGE_PREFIX = 'encrypted_chat_room_';
+  private readonly DESTROYED_ROOM_PREFIX = 'encrypted_chat_destroyed_room_';
   private readonly USER_NAME_KEY = 'encrypted_chat_user_name';
   private readonly USER_COLOR_KEY = 'encrypted_chat_user_color';
   private readonly ROOM_EXPIRATION_TIME = 24 * 60 * 60 * 1000; // 24小时
@@ -50,6 +51,18 @@ class ChatStorageManager {
         }
       }
     });
+
+    keys.forEach((key) => {
+      if (!key.startsWith(this.DESTROYED_ROOM_PREFIX)) {
+        return;
+      }
+
+      const raw = localStorage.getItem(key);
+      const destroyedAt = raw ? Number.parseInt(raw, 10) : Number.NaN;
+      if (!Number.isFinite(destroyedAt) || now - destroyedAt > this.ROOM_EXPIRATION_TIME) {
+        localStorage.removeItem(key);
+      }
+    });
   }
 
   /**
@@ -59,10 +72,37 @@ class ChatStorageManager {
     return `${this.STORAGE_PREFIX}${roomId}`;
   }
 
+  private getDestroyedRoomKey(roomId: string): string {
+    return `${this.DESTROYED_ROOM_PREFIX}${roomId}`;
+  }
+
+  isRoomDestroyed(roomId: string): boolean {
+    const raw = localStorage.getItem(this.getDestroyedRoomKey(roomId));
+    if (!raw) {
+      return false;
+    }
+
+    const destroyedAt = Number.parseInt(raw, 10);
+    if (!Number.isFinite(destroyedAt) || Date.now() - destroyedAt > this.ROOM_EXPIRATION_TIME) {
+      localStorage.removeItem(this.getDestroyedRoomKey(roomId));
+      return false;
+    }
+
+    return true;
+  }
+
+  clearDestroyedRoomMarker(roomId: string): void {
+    localStorage.removeItem(this.getDestroyedRoomKey(roomId));
+  }
+
   /**
    * 获取房间数据（不进行密码验证）
    */
   getRoom(roomId: string): ChatRoomStorage | null {
+    if (this.isRoomDestroyed(roomId)) {
+      return null;
+    }
+
     const roomKey = this.getRoomKey(roomId);
     const existingData = localStorage.getItem(roomKey);
     if (existingData) {
@@ -75,8 +115,13 @@ class ChatStorageManager {
    * 创建或加入房间
    */
   createOrJoinRoom(roomId: string, name: string, color: string, password?: string, encryptionMethod?: string): ChatRoomStorage {
+    if (this.isRoomDestroyed(roomId)) {
+      throw new Error('这个房间已被销毁，无法再次进入。');
+    }
+
     const roomKey = this.getRoomKey(roomId);
     const existingData = localStorage.getItem(roomKey);
+    const now = Date.now();
 
     if (existingData) {
       // 加入现有房间
@@ -102,6 +147,8 @@ class ChatStorageManager {
       // 更新用户信息
       roomData.myName = name;
       roomData.myColor = color;
+      roomData.savedPassword = password || roomData.savedPassword;
+      roomData.lastAccessed = now;
 
       localStorage.setItem(roomKey, JSON.stringify(roomData));
       console.log(`[ChatStorage] Joined existing room with encryption: ${roomData.encryptionMethod}`);
@@ -109,7 +156,6 @@ class ChatStorageManager {
     } else {
       // 创建新房间
       const keyPair = chatCrypto.generateKeyPair();
-      const now = Date.now();
 
       const roomData: ChatRoomStorage = {
         roomId,
@@ -118,13 +164,18 @@ class ChatStorageManager {
           privateKey: chatCrypto.toBase64(keyPair.privateKey),
           publicKeyHex: keyPair.publicKeyHex,
         },
+        ownerUserId: keyPair.publicKeyHex,
+        ownerName: name,
+        isOwner: true,
         passwordHash: password ? chatCrypto.hashPassword(password) : undefined,
+        savedPassword: password || undefined,
         encryptionMethod: (encryptionMethod as any) || 'AES-256-CBC',
         myName: name,
         myColor: color,
         messages: [],
         users: [],
         createdAt: now,
+        lastAccessed: now,
         expiresAt: now + this.ROOM_EXPIRATION_TIME,
       };
 
@@ -138,6 +189,11 @@ class ChatStorageManager {
    * 获取房间数据
    */
   getRoomData(roomId: string): ChatRoomStorage | null {
+    if (this.isRoomDestroyed(roomId)) {
+      localStorage.removeItem(this.getRoomKey(roomId));
+      return null;
+    }
+
     const roomKey = this.getRoomKey(roomId);
     const data = localStorage.getItem(roomKey);
 
@@ -145,6 +201,9 @@ class ChatStorageManager {
 
     try {
       const roomData: ChatRoomStorage = JSON.parse(data);
+      if (!roomData.lastAccessed) {
+        roomData.lastAccessed = roomData.createdAt || Date.now();
+      }
 
       // 检查是否过期
       if (roomData.expiresAt && roomData.expiresAt < Date.now()) {
@@ -181,6 +240,7 @@ class ChatStorageManager {
     if (!roomData) return;
 
     roomData.messages.push(message);
+    roomData.lastAccessed = Date.now();
 
     const roomKey = this.getRoomKey(roomId);
     localStorage.setItem(roomKey, JSON.stringify(roomData));
@@ -202,6 +262,7 @@ class ChatStorageManager {
     if (!roomData) return;
 
     roomData.messages = roomData.messages.filter(m => m.id !== messageId);
+    roomData.lastAccessed = Date.now();
 
     const roomKey = this.getRoomKey(roomId);
     localStorage.setItem(roomKey, JSON.stringify(roomData));
@@ -215,9 +276,70 @@ class ChatStorageManager {
     if (!roomData) return;
 
     roomData.users = users;
+    roomData.lastAccessed = Date.now();
 
     const roomKey = this.getRoomKey(roomId);
     localStorage.setItem(roomKey, JSON.stringify(roomData));
+  }
+
+  touchRoom(roomId: string): void {
+    const roomData = this.getRoomData(roomId);
+    if (!roomData) return;
+
+    roomData.lastAccessed = Date.now();
+    localStorage.setItem(this.getRoomKey(roomId), JSON.stringify(roomData));
+  }
+
+  updateRoomOwner(roomId: string, ownerUserId: string, ownerName?: string): void {
+    const roomData = this.getRoomData(roomId);
+    if (!roomData) return;
+
+    roomData.ownerUserId = ownerUserId;
+    roomData.ownerName = ownerName || roomData.ownerName;
+    roomData.isOwner = roomData.keyPair.publicKeyHex === ownerUserId;
+    roomData.lastAccessed = Date.now();
+
+    localStorage.setItem(this.getRoomKey(roomId), JSON.stringify(roomData));
+  }
+
+  getRecentRooms(limit = 6): ChatRoomStorage[] {
+    const now = Date.now();
+
+    return Object.keys(localStorage)
+      .filter((key) => key.startsWith(this.STORAGE_PREFIX))
+      .map((key) => {
+        try {
+          const raw = localStorage.getItem(key);
+          if (!raw) {
+            return null;
+          }
+
+          const roomData = JSON.parse(raw) as ChatRoomStorage;
+          if (this.isRoomDestroyed(roomData.roomId)) {
+            localStorage.removeItem(key);
+            return null;
+          }
+
+          if (roomData.expiresAt && roomData.expiresAt < now) {
+            localStorage.removeItem(key);
+            return null;
+          }
+
+          return {
+            ...roomData,
+            isOwner: roomData.ownerUserId
+              ? roomData.ownerUserId === roomData.keyPair.publicKeyHex
+              : Boolean(roomData.isOwner),
+            lastAccessed: roomData.lastAccessed || roomData.createdAt || now,
+          } as ChatRoomStorage;
+        } catch (error) {
+          console.error('[ChatStorage] Failed to parse recent room data:', error);
+          return null;
+        }
+      })
+      .filter((room): room is ChatRoomStorage => Boolean(room))
+      .sort((a, b) => b.lastAccessed - a.lastAccessed)
+      .slice(0, limit);
   }
 
   /**
@@ -231,9 +353,14 @@ class ChatStorageManager {
   /**
    * 销毁房间（无痕删除）
    */
-  destroyRoom(roomId: string): void {
+  clearRoomData(roomId: string): void {
     const roomKey = this.getRoomKey(roomId);
     localStorage.removeItem(roomKey);
+  }
+
+  destroyRoom(roomId: string, destroyedAt = Date.now()): void {
+    localStorage.setItem(this.getDestroyedRoomKey(roomId), String(destroyedAt));
+    this.clearRoomData(roomId);
     console.log('[ChatStorage] Room destroyed:', roomId);
   }
 

@@ -71,12 +71,17 @@ export interface ChatRoomStorage {
     privateKey: string; // Base64
     publicKeyHex: string;
   };
+  ownerUserId?: string;
+  ownerName?: string;
+  isOwner?: boolean;
   passwordHash?: string; // 房间密码哈希（如果设置了密码）
   encryptionMethod: EncryptionMethod; // 加密算法
+  savedPassword?: string;
   myName: string;
   myColor: string;
   messages: ChatMessage[];
   users: ChatUser[];
   createdAt: number;
+  lastAccessed: number;
   expiresAt: number; // 24小时后过期
 }

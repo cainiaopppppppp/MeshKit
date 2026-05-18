@@ -1,20 +1,20 @@
-/**
- * 便签墙主页面
- */
-
 import { useState, useEffect, useRef } from 'react';
 import { PasswordConfirmDialog } from '../components/PasswordConfirmDialog';
+import { ShareLinkDialog } from '../components/ShareLinkDialog';
 import { StickyNoteCard } from '../components/StickyNoteCard';
+import { ExperienceBadge } from '../components/ExperienceShell';
+import { useAppChrome } from '../contexts/AppChromeContext';
 import { StickyNotesRoom } from '../services/StickyNotesRoom';
-import type { StickyNote, UserInfo, RoomConfig } from '../types/stickyNote';
+import type { StickyNote, UserInfo, RoomConfig, Room as StickyRoom } from '../types/stickyNote';
 import { ENCRYPTION_METHODS, type EncryptionMethod } from '../utils/Encryption';
+import { getShareableWebUrl, parseShareInvitePayloadFromUrl } from '../utils/signalingConfig';
+import { notesStorage } from '../utils/NotesStorage';
 
 export function StickyNotesPage() {
   const [roomId, setRoomId] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [userName, setUserName] = useState(() => {
-    // 从 localStorage 读取保存的用户名
     return localStorage.getItem('sticky_notes_user_name') || '';
   });
   const [enableEncryption, setEnableEncryption] = useState(false);
@@ -22,48 +22,291 @@ export function StickyNotesPage() {
   const [notes, setNotes] = useState<StickyNote[]>([]);
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [isConnected, setIsConnected] = useState(false);
-  const [peerCount, setPeerCount] = useState(0);
+  const [, setPeerCount] = useState(0);
   const [roomInfo, setRoomInfo] = useState<any>(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const [colorPickerPosition, setColorPickerPosition] = useState<{ top: number; left: number } | null>(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [tempUserName, setTempUserName] = useState('');
   const [customColor, setCustomColor] = useState('#FFE6E6');
   const [encryptionMethod, setEncryptionMethod] = useState<EncryptionMethod>('AES-256-CBC');
   const [roomExpiresIn, setRoomExpiresIn] = useState<number | null>(null);
   const [showDestroyPasswordDialog, setShowDestroyPasswordDialog] = useState(false);
+  const [isSharingRoom, setIsSharingRoom] = useState(false);
+  const [isSystemSharingRoom, setIsSystemSharingRoom] = useState(false);
+  const [showShareDialog, setShowShareDialog] = useState(false);
+  const [shareUrl, setShareUrl] = useState('');
+  const [isRefreshingRoom, setIsRefreshingRoom] = useState(false);
+  const [recentRooms, setRecentRooms] = useState<StickyRoom[]>([]);
+  const [recentRoomActionId, setRecentRoomActionId] = useState<string | null>(null);
+  const [isDestroyingAllRecentRooms, setIsDestroyingAllRecentRooms] = useState(false);
+  const [isCanvasLocked, setIsCanvasLocked] = useState(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
 
-  // 画布拖动状态
+    return localStorage.getItem('sticky_notes_canvas_locked') === '1';
+  });
+  const [isCanvasTouchPending, setIsCanvasTouchPending] = useState(false);
+
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
   const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
   const dragStartPos = useRef({ x: 0, y: 0 });
   const dragStartOffset = useRef({ x: 0, y: 0 });
+  const canvasTouchHoldTimer = useRef<number | null>(null);
+  const canvasTouchStartPoint = useRef<{ x: number; y: number } | null>(null);
 
-  // 画布缩放状态
   const [canvasScale, setCanvasScale] = useState(1);
 
   const roomRef = useRef<StickyNotesRoom | null>(null);
   const wallRef = useRef<HTMLDivElement>(null);
+  const colorPickerButtonRef = useRef<HTMLButtonElement>(null);
+  const colorPickerPanelRef = useRef<HTMLDivElement>(null);
+  const previousNoteIdsRef = useRef<Set<string>>(new Set());
+  const hasHydratedNotesRef = useRef(false);
+  const isDestroyingCurrentRoomRef = useRef(false);
+  const { setBrandHeaderHidden } = useAppChrome();
 
-  // 生成随机用户名
+  const clearCanvasTouchHold = () => {
+    if (canvasTouchHoldTimer.current !== null) {
+      window.clearTimeout(canvasTouchHoldTimer.current);
+      canvasTouchHoldTimer.current = null;
+    }
+
+    canvasTouchStartPoint.current = null;
+    setIsCanvasTouchPending(false);
+  };
+
+  const refreshRecentRooms = async () => {
+    const now = Date.now();
+    const rooms = await notesStorage.getAllRooms();
+    setRecentRooms(
+      rooms
+        .filter((room) => (!room.expiresAt || room.expiresAt > now) && !notesStorage.isRoomDestroyed(room.id))
+        .sort((a, b) => b.lastAccessed - a.lastAccessed)
+        .slice(0, 6),
+    );
+  };
+
+  const updateColorPickerPosition = () => {
+    const button = colorPickerButtonRef.current;
+    if (!button) {
+      return;
+    }
+
+    const rect = button.getBoundingClientRect();
+    const panelWidth = 220;
+    const viewportPadding = 12;
+    const left = Math.min(
+      Math.max(rect.left, viewportPadding),
+      window.innerWidth - panelWidth - viewportPadding,
+    );
+
+    setColorPickerPosition({
+      top: rect.bottom + 10,
+      left,
+    });
+  };
+
+  const focusNoteInViewport = (note: StickyNote) => {
+    const wall = wallRef.current;
+    if (!wall) {
+      return;
+    }
+
+    const rect = wall.getBoundingClientRect();
+    const nextOffsetX = rect.width / 2 - (note.position.x + note.size.width / 2) * canvasScale;
+    const nextOffsetY = rect.height / 2 - (note.position.y + note.size.height / 2) * canvasScale;
+
+    setCanvasOffset({
+      x: Math.round(nextOffsetX),
+      y: Math.round(nextOffsetY),
+    });
+  };
+
+  const handleLocateLatestNote = () => {
+    if (notes.length === 0) {
+      return;
+    }
+
+    const latestNote = [...notes].sort((a, b) => {
+      const aTime = Math.max(a.updatedAt, a.createdAt);
+      const bTime = Math.max(b.updatedAt, b.createdAt);
+      return bTime - aTime;
+    })[0];
+
+    if (latestNote) {
+      focusNoteInViewport(latestNote);
+    }
+  };
+
   const generateRandomUserName = () => {
-    const randomName = `用户${Math.random().toString(36).substring(2, 6)}`;
+    const randomName = `匿名用户_${Math.random().toString(36).substring(2, 6)}`;
     setUserName(randomName);
   };
 
-  // 颜色选项
   const colors = [
-    '#FFE6E6', // 粉红
-    '#E6F3FF', // 浅蓝
-    '#FFF9E6', // 淡黄
-    '#E6FFE6', // 淡绿
-    '#F3E6FF', // 淡紫
-    '#FFE6F3', // 淡粉
-    '#E6FFFF', // 淡青
-    '#FFEEE6', // 淡橙
+    '#FFE6E6', // 浅红
+    '#E6F3FF',
+    '#FFF9E6',
+    '#E6FFE6',
+    '#F3E6FF',
+    '#FFE6F3',
+    '#E6FFFF',
+    '#FFEEE6',
   ];
 
-  // 创建或加入房间
+  const copyTextWithFallback = async (text: string, successMessage?: string): Promise<boolean> => {
+    if (!text.trim()) {
+      return false;
+    }
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        if (successMessage) {
+          alert(successMessage);
+        }
+        return true;
+      }
+    } catch (error: any) {
+      console.warn('Clipboard API copy failed:', error);
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', 'true');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    textarea.style.pointerEvents = 'none';
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    try {
+      const copied = document.execCommand('copy');
+      if (!copied) {
+        throw new Error('copy failed');
+      }
+      if (successMessage) {
+        alert(successMessage);
+      }
+      return true;
+    } catch (error: any) {
+      console.error('Fallback copy failed:', error);
+      window.prompt('请手动复制以下内容', text);
+      return false;
+    } finally {
+      if (textarea.parentNode === document.body) {
+        document.body.removeChild(textarea);
+      }
+    }
+  };
+
+  const joinStickyRoom = async (config: RoomConfig, preferredUserName?: string) => {
+    if (!config.roomId.trim()) {
+      alert('请输入房间码');
+      return false;
+    }
+
+    if (config.enableEncryption && !config.password?.trim()) {
+      alert('启用加密时必须设置密码');
+      return false;
+    }
+
+    if (config.enableEncryption && (config.password?.trim().length ?? 0) < 4) {
+      alert('密码至少需要 4 个字符');
+      return false;
+    }
+
+    try {
+      notesStorage.clearDestroyedRoomMarker(config.roomId.trim());
+
+      const nextUserName = preferredUserName?.trim() || userName.trim();
+
+      if (nextUserName) {
+        localStorage.setItem('sticky_notes_user_name', nextUserName);
+        if (nextUserName !== userName) {
+          setUserName(nextUserName);
+        }
+      }
+
+      if (roomRef.current) {
+        await roomRef.current.leaveRoom();
+        roomRef.current = null;
+      }
+
+      const room = new StickyNotesRoom();
+      roomRef.current = room;
+
+      await room.joinRoom(
+        {
+          ...config,
+          roomId: config.roomId.trim(),
+          password: config.password?.trim() || '',
+        },
+        {
+          onNotesChange: (updatedNotes) => {
+            setNotes(updatedNotes);
+          },
+          onUsersChange: (updatedUsers) => {
+            setUsers(updatedUsers);
+            setPeerCount(Math.max(updatedUsers.length, 1));
+          },
+          onConnectionChange: (connected, count) => {
+            setIsConnected(connected);
+            setPeerCount(count);
+          },
+          onRoomDestroyed: handleRoomDestroyed,
+          onRoomExpiring: (remainingTime) => {
+            setRoomExpiresIn(remainingTime);
+          },
+        },
+      );
+
+      setIsInRoom(true);
+      const info = room.getRoomInfo();
+      setRoomInfo(info);
+
+      if (info.isExistingEncryptedRoom && info.encryptionMethod) {
+        setEncryptionMethod(info.encryptionMethod);
+        console.log('[StickyNotesPage] Joined existing encrypted room, using algorithm:', info.encryptionMethod);
+      }
+
+      const initialNotes = await room.getAllNotes();
+      setNotes(initialNotes);
+      const initialUsers = room.getAllUsers();
+      setUsers(initialUsers);
+      setPeerCount(Math.max(initialUsers.length, 1));
+      await refreshRecentRooms();
+      return true;
+    } catch (error) {
+      console.error('[StickyNotesPage] Failed to join room:', error);
+      const errorMessage = error instanceof Error ? error.message : '加入房间失败';
+      alert(errorMessage);
+      if (roomRef.current) {
+        roomRef.current = null;
+      }
+      return false;
+    }
+  };
+
   const handleJoinRoom = async () => {
+    if (enableEncryption && password !== confirmPassword) {
+      alert('两次输入的密码不一致');
+      return;
+    }
+
+    await joinStickyRoom(
+      {
+        roomId: roomId.trim(),
+        password: password.trim(),
+        enableEncryption,
+        encryptionMethod,
+      },
+      userName.trim(),
+    );
+    return;
+
     if (!roomId.trim()) {
       alert('请输入房间码');
       return;
@@ -75,7 +318,7 @@ export function StickyNotesPage() {
     }
 
     if (enableEncryption && password.length < 4) {
-      alert('密码至少需要4个字符');
+      alert('密码至少需要 4 个字符');
       return;
     }
 
@@ -85,7 +328,6 @@ export function StickyNotesPage() {
     }
 
     try {
-      // 保存用户名到 localStorage
       if (userName.trim()) {
         localStorage.setItem('sticky_notes_user_name', userName.trim());
       }
@@ -111,10 +353,7 @@ export function StickyNotesPage() {
           setIsConnected(connected);
           setPeerCount(count);
         },
-        onRoomDestroyed: () => {
-          alert('房间已被销毁');
-          handleLeaveRoom();
-        },
+        onRoomDestroyed: handleRoomDestroyed,
         onRoomExpiring: (remainingTime) => {
           setRoomExpiresIn(remainingTime);
         },
@@ -124,32 +363,92 @@ export function StickyNotesPage() {
       const info = room.getRoomInfo();
       setRoomInfo(info);
 
-      // 如果加入的是已存在的加密房间，更新本地的加密算法设置
       if (info.isExistingEncryptedRoom && info.encryptionMethod) {
         setEncryptionMethod(info.encryptionMethod);
         console.log('[StickyNotesPage] Joined existing encrypted room, using algorithm:', info.encryptionMethod);
       }
 
-      // 加载初始数据
       const initialNotes = await room.getAllNotes();
       setNotes(initialNotes);
       setUsers(room.getAllUsers());
 
-      // 初始化 peerCount
       setPeerCount(1);
-    } catch (error) {
+      await refreshRecentRooms();
+    } catch (error: any) {
       console.error('[StickyNotesPage] Failed to join room:', error);
-      const errorMessage = error instanceof Error ? error.message : '加入房间失败';
+      const errorMessage = error && typeof error === 'object' && 'message' in error
+        ? String((error as { message?: unknown }).message ?? '加入房间失败')
+        : '加入房间失败';
       alert(errorMessage);
-      // 清理失败的房间引用
       if (roomRef.current) {
         roomRef.current = null;
       }
     }
   };
 
-  // 离开房间
+  const handleRefreshRoom = async () => {
+    const activeRoomId = roomInfo?.roomId || roomId.trim();
+    if (!activeRoomId) {
+      alert('请先创建或加入房间');
+      return;
+    }
+
+    setIsRefreshingRoom(true);
+
+    try {
+      if (roomRef.current) {
+        await roomRef.current.leaveRoom();
+        roomRef.current = null;
+      }
+
+      const nextRoom = new StickyNotesRoom();
+      roomRef.current = nextRoom;
+
+      await nextRoom.joinRoom(
+        {
+          roomId: activeRoomId,
+          password: password.trim(),
+          enableEncryption: roomInfo?.isEncrypted || enableEncryption,
+          encryptionMethod: (roomInfo?.encryptionMethod || encryptionMethod) as EncryptionMethod,
+        },
+        {
+          onNotesChange: (updatedNotes) => {
+            setNotes(updatedNotes);
+          },
+          onUsersChange: (updatedUsers) => {
+            setUsers(updatedUsers);
+            setPeerCount(Math.max(updatedUsers.length, 1));
+          },
+          onConnectionChange: (connected, count) => {
+            setIsConnected(connected);
+            setPeerCount(count);
+          },
+          onRoomDestroyed: handleRoomDestroyed,
+          onRoomExpiring: (remainingTime) => {
+            setRoomExpiresIn(remainingTime);
+          },
+        },
+      );
+
+      const nextInfo = nextRoom.getRoomInfo();
+      setRoomInfo(nextInfo);
+      setNotes(await nextRoom.getAllNotes());
+      const refreshedUsers = nextRoom.getAllUsers();
+      setUsers(refreshedUsers);
+      setPeerCount(Math.max(refreshedUsers.length, 1));
+      setIsConnected(true);
+      await refreshRecentRooms();
+    } catch (error) {
+      console.error('[StickyNotesPage] Failed to refresh room:', error);
+      alert(error instanceof Error ? error.message : '刷新房间失败');
+    } finally {
+      setIsRefreshingRoom(false);
+    }
+  };
+
   const handleLeaveRoom = async () => {
+    isDestroyingCurrentRoomRef.current = false;
+
     if (roomRef.current) {
       await roomRef.current.leaveRoom();
       roomRef.current = null;
@@ -159,27 +458,54 @@ export function StickyNotesPage() {
     setUsers([]);
     setRoomInfo(null);
     setShowDestroyPasswordDialog(false);
+    setShowShareDialog(false);
+    setShareUrl('');
+    setShowColorPicker(false);
+    setIsDraggingCanvas(false);
+    clearCanvasTouchHold();
+    await refreshRecentRooms();
+  };
+
+  const handleDestroyedRoomExit = () => {
+    const message = isDestroyingCurrentRoomRef.current
+      ? '房间已销毁。'
+      : '房主已销毁这个便签墙房间，你已退出当前房间。';
+
+    isDestroyingCurrentRoomRef.current = false;
+    alert(message);
+    void handleLeaveRoom();
+  };
+
+  const handleRoomDestroyed = () => {
+    handleDestroyedRoomExit();
+    return;
+
+    const message = isDestroyingCurrentRoomRef.current
+      ? '房间已销毁。'
+      : '房主已销毁这个便签墙房间，你已退出当前房间。';
+
+    isDestroyingCurrentRoomRef.current = false;
+    alert(message);
+    void handleLeaveRoom();
   };
 
   const destroyCurrentRoom = async (verifyPassword?: string) => {
     if (!roomRef.current) return;
 
     try {
+      isDestroyingCurrentRoomRef.current = true;
       await roomRef.current.destroyRoom(verifyPassword);
       setShowDestroyPasswordDialog(false);
-      setTimeout(() => {
-        handleLeaveRoom();
-      }, 500);
     } catch (error) {
+      isDestroyingCurrentRoomRef.current = false;
       alert((error as Error).message || 'Failed to destroy room');
     }
   };
 
-  // 销毁房间
   const handleDestroyRoom = async () => {
     if (!roomRef.current) return;
 
-    if (!confirm('确定要销毁房间吗？\n\n销毁后：\n- 所有便签将被删除\n- 所有成员将被移除\n- 此操作不可撤销')) {
+    if (!confirm('确定要销毁这个房间吗？\n\n销毁后所有便签、成员和本地缓存都会被清空。')) {
       return;
     }
 
@@ -199,7 +525,6 @@ export function StickyNotesPage() {
     setShowDestroyPasswordDialog(false);
   };
 
-  // 添加便签
   const handleAddNote = async (color: string) => {
     if (!roomRef.current) return;
 
@@ -208,45 +533,45 @@ export function StickyNotesPage() {
 
     const rect = wall.getBoundingClientRect();
 
-    // 随机位置
-    const randomX = Math.floor(Math.random() * (rect.width - 250));
-    const randomY = Math.floor(Math.random() * (rect.height - 200));
+    const noteWidth = 250;
+    const noteHeight = 200;
+    const visibleCenterX = (-canvasOffset.x + rect.width / 2) / canvasScale;
+    const visibleCenterY = (-canvasOffset.y + rect.height / 2) / canvasScale;
+    const jitterX = Math.round((Math.random() - 0.5) * 80);
+    const jitterY = Math.round((Math.random() - 0.5) * 56);
+    const nextX = Math.max(24, Math.round(visibleCenterX - noteWidth / 2 + jitterX));
+    const nextY = Math.max(24, Math.round(visibleCenterY - noteHeight / 2 + jitterY));
 
     await roomRef.current.addNote({
       content: '',
       color,
-      position: { x: randomX, y: randomY },
-      size: { width: 250, height: 200 },
+      position: { x: nextX, y: nextY },
+      size: { width: noteWidth, height: noteHeight },
     });
 
     setShowColorPicker(false);
   };
 
-  // 更新便签
   const handleUpdateNote = async (noteId: string, updates: Partial<StickyNote>) => {
     if (!roomRef.current) return;
     await roomRef.current.updateNote(noteId, updates);
   };
 
-  // 删除便签
   const handleDeleteNote = async (noteId: string) => {
     if (!roomRef.current) return;
     roomRef.current.deleteNote(noteId);
   };
 
-  // 生成随机房间码
   const generateRoomId = () => {
     const id = Math.random().toString(36).substring(2, 10).toUpperCase();
     setRoomId(id);
   };
 
-  // 开始编辑昵称
   const handleStartEditName = () => {
     setTempUserName(roomInfo?.userName || '');
     setIsEditingName(true);
   };
 
-  // 保存昵称
   const handleSaveName = () => {
     const newName = tempUserName.trim() || '匿名用户';
     if (roomRef.current) {
@@ -256,28 +581,55 @@ export function StickyNotesPage() {
     setIsEditingName(false);
   };
 
-  // 取消编辑昵称
   const handleCancelEditName = () => {
     setIsEditingName(false);
   };
 
-  // 画布拖动处理（用于移动端查看屏幕外的便签）
   const handleCanvasPointerDown = (e: React.PointerEvent) => {
-    // 如果点击的是便签卡片，不触发画布拖动
     const target = e.target as HTMLElement;
-    if (target.closest('.sticky-note-card')) {
+    if (target.closest('.sticky-note-card') || isCanvasLocked) {
+      return;
+    }
+
+    if (e.pointerType === 'touch') {
+      clearCanvasTouchHold();
+      canvasTouchStartPoint.current = { x: e.clientX, y: e.clientY };
+      setIsCanvasTouchPending(true);
+
+      canvasTouchHoldTimer.current = window.setTimeout(() => {
+        if (!canvasTouchStartPoint.current) {
+          return;
+        }
+
+        dragStartPos.current = { ...canvasTouchStartPoint.current };
+        dragStartOffset.current = { ...canvasOffset };
+        setIsDraggingCanvas(true);
+        setIsCanvasTouchPending(false);
+        canvasTouchStartPoint.current = null;
+        canvasTouchHoldTimer.current = null;
+      }, 180);
+
       return;
     }
 
     setIsDraggingCanvas(true);
     dragStartPos.current = { x: e.clientX, y: e.clientY };
     dragStartOffset.current = { ...canvasOffset };
-
-    // 防止文本选择
     e.preventDefault();
   };
 
   const handleCanvasPointerMove = (e: React.PointerEvent) => {
+    if (canvasTouchStartPoint.current && !isDraggingCanvas) {
+      const deltaX = e.clientX - canvasTouchStartPoint.current.x;
+      const deltaY = e.clientY - canvasTouchStartPoint.current.y;
+      const distance = Math.hypot(deltaX, deltaY);
+
+      if (distance > 10) {
+        clearCanvasTouchHold();
+      }
+      return;
+    }
+
     if (!isDraggingCanvas) return;
 
     const deltaX = e.clientX - dragStartPos.current.x;
@@ -291,9 +643,9 @@ export function StickyNotesPage() {
 
   const handleCanvasPointerUp = () => {
     setIsDraggingCanvas(false);
+    clearCanvasTouchHold();
   };
 
-  // 格式化剩余时间
   const formatRemainingTime = (ms: number): string => {
     const hours = Math.floor(ms / (1000 * 60 * 60));
     const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
@@ -303,48 +655,406 @@ export function StickyNotesPage() {
     } else if (minutes > 0) {
       return `${minutes}分钟`;
     } else {
-      return '即将过期';
+      return '已过期';
     }
   };
 
-  // 复制房间码
   const copyRoomId = async () => {
+    const activeRoomId = roomInfo?.roomId || roomId.trim();
+
+    if (!activeRoomId) {
+      alert('请先创建或加入房间');
+      return;
+    }
+
+    await copyTextWithFallback(activeRoomId, '房间码已复制到剪贴板');
+  };
+
+  const shareRoom = async () => {
+    const activeRoomId = roomInfo?.roomId || roomId.trim();
+
+    if (!activeRoomId) {
+      alert('请先创建或加入房间');
+      return;
+    }
+
+    setIsSharingRoom(true);
+
     try {
-      // 检查 Clipboard API 是否可用
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(roomId);
-        alert('房间码已复制到剪贴板');
-      } else {
-        // 降级方案：创建临时输入框
-        const textarea = document.createElement('textarea');
-        textarea.value = roomId;
-        textarea.style.position = 'fixed';
-        textarea.style.opacity = '0';
-        document.body.appendChild(textarea);
-        textarea.select();
+      const shareable = await getShareableWebUrl('/sticky-notes', {
+        stickyNotes: {
+          roomId: activeRoomId,
+          encrypted: roomInfo?.isEncrypted || enableEncryption,
+          encryptionMethod: roomInfo?.encryptionMethod || encryptionMethod,
+          password: password.trim() || undefined,
+        },
+      });
+
+      setShareUrl(shareable.url);
+      setShowShareDialog(true);
+    } catch (error) {
+      console.error('分享房间失败:', error);
+      alert('分享房间失败，请稍后重试');
+    } finally {
+      setIsSharingRoom(false);
+    }
+  };
+
+  const handleCopyShareLink = async (): Promise<boolean> => {
+    if (!shareUrl) {
+      return false;
+    }
+
+    return copyTextWithFallback(shareUrl);
+  };
+
+  const handleNativeShare = async () => {
+    const activeRoomId = roomInfo?.roomId || roomId.trim();
+
+    if (!shareUrl || !navigator.share || !activeRoomId) {
+      return;
+    }
+
+    setIsSystemSharingRoom(true);
+
+    try {
+      await navigator.share({
+        title: 'MeshKit 便签墙',
+        text: '加入便签墙房间 ' + activeRoomId,
+        url: shareUrl,
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return;
+      }
+      console.warn('Web Share API failed:', error);
+      alert('系统分享失败，请改用复制链接或扫码分享。');
+    } finally {
+      setIsSystemSharingRoom(false);
+    }
+  };
+
+  const applyRecentRoom = (room: StickyRoom) => {
+    setRoomId(room.id);
+    setEnableEncryption(room.isEncrypted);
+    setEncryptionMethod(room.encryptionMethod || 'AES-256-CBC');
+    if (room.lastUserName && !userName.trim()) {
+      setUserName(room.lastUserName);
+    }
+    const nextPassword = room.savedPassword || '';
+    setPassword(nextPassword);
+    setConfirmPassword(nextPassword);
+  };
+
+  const handleEnterRecentRoom = async (room: StickyRoom) => {
+    if (notesStorage.isRoomDestroyed(room.id)) {
+      await refreshRecentRooms();
+      alert('这个房间已被销毁，无法再次进入。');
+      return;
+    }
+
+    const nextPassword = room.savedPassword?.trim() || '';
+    const nextUserName = userName.trim() || room.lastUserName || '';
+
+    if (room.isEncrypted && !nextPassword) {
+      applyRecentRoom(room);
+      alert('已帮你回填最近房间信息，请输入密码后直接加入。');
+      return;
+    }
+
+    setRecentRoomActionId(room.id);
+    setRoomId(room.id);
+    setEnableEncryption(room.isEncrypted);
+    setEncryptionMethod(room.encryptionMethod || 'AES-256-CBC');
+    setPassword(nextPassword);
+    setConfirmPassword(nextPassword);
+
+    try {
+      await joinStickyRoom(
+        {
+          roomId: room.id,
+          password: nextPassword,
+          enableEncryption: room.isEncrypted,
+          encryptionMethod: room.encryptionMethod || 'AES-256-CBC',
+        },
+        nextUserName,
+      );
+    } finally {
+      setRecentRoomActionId(null);
+    }
+  };
+
+  const handleDestroyRecentRoom = async (room: StickyRoom) => {
+    if (!room.isOwner) {
+      return;
+    }
+
+    if (!confirm('确定要直接销毁这个最近房间吗？\n\n销毁后所有成员和便签都会被清空。')) {
+      return;
+    }
+
+    const savedPassword = room.savedPassword?.trim() || '';
+    const verifyPassword = room.isEncrypted
+      ? (savedPassword || window.prompt('请输入房间密码，用于直接销毁这个房间')?.trim() || '')
+      : undefined;
+
+    if (room.isEncrypted && !verifyPassword) {
+      return;
+    }
+
+    setRecentRoomActionId(room.id);
+
+    try {
+      const tempRoom = new StickyNotesRoom();
+
+      try {
+        await tempRoom.joinRoom(
+          {
+            roomId: room.id,
+            password: verifyPassword,
+            enableEncryption: room.isEncrypted,
+            encryptionMethod: room.encryptionMethod || 'AES-256-CBC',
+          },
+          {},
+        );
+
+        await tempRoom.destroyRoom(verifyPassword);
+      } finally {
+        await tempRoom.leaveRoom().catch(() => undefined);
+      }
+
+      await refreshRecentRooms();
+      alert('房间已销毁，并从本地列表中移除。');
+    } catch (error) {
+      console.error('[StickyNotesPage] Failed to destroy recent room:', error);
+      alert(error instanceof Error ? error.message : '销毁房间失败');
+    } finally {
+      setRecentRoomActionId(null);
+    }
+  };
+
+  const handleDestroyAllRecentRooms = async () => {
+    const ownedRooms = recentRooms.filter((room) => room.isOwner);
+
+    if (ownedRooms.length === 0) {
+      alert('最近房间里还没有可销毁的房间。');
+      return;
+    }
+
+    if (
+      !confirm(
+        `确定要一键销毁 ${ownedRooms.length} 个房间吗？\n\n销毁后所有成员和便签都会被清空。`,
+      )
+    ) {
+      return;
+    }
+
+    setIsDestroyingAllRecentRooms(true);
+
+    let destroyedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+
+    try {
+      for (const room of ownedRooms) {
+        const savedPassword = room.savedPassword?.trim() || '';
+
+        if (room.isEncrypted && !savedPassword) {
+          skippedCount += 1;
+          continue;
+        }
+
+        const tempRoom = new StickyNotesRoom();
 
         try {
-          document.execCommand('copy');
-          alert('房间码已复制到剪贴板');
-        } catch (err) {
-          // 如果都失败了，就显示房间码让用户手动复制
-          alert(`房间码：${roomId}\n请手动复制`);
+          await tempRoom.joinRoom(
+            {
+              roomId: room.id,
+              password: savedPassword || undefined,
+              enableEncryption: room.isEncrypted,
+              encryptionMethod: room.encryptionMethod || 'AES-256-CBC',
+            },
+            {},
+          );
+
+          await tempRoom.destroyRoom(savedPassword || undefined);
+          destroyedCount += 1;
+        } catch (error) {
+          failedCount += 1;
+          console.error('[StickyNotesPage] Failed to destroy room in batch:', room.id, error);
         } finally {
-          // 安全移除：确保 textarea 是 body 的子节点
-          if (textarea.parentNode === document.body) {
-            document.body.removeChild(textarea);
-          }
+          await tempRoom.leaveRoom().catch(() => undefined);
         }
       }
-    } catch (error) {
-      console.error('复制失败:', error);
-      alert(`房间码：${roomId}\n请手动复制`);
+
+      await refreshRecentRooms();
+    } finally {
+      setIsDestroyingAllRecentRooms(false);
     }
+
+    if (destroyedCount === 0 && skippedCount > 0 && failedCount === 0) {
+      alert('还没有成功销毁任何房间。部分加密房间缺少已保存的密码，请先进入房间后再重试。');
+      return;
+    }
+
+    const summary: string[] = [];
+
+    if (destroyedCount > 0) {
+      summary.push(`已销毁 ${destroyedCount} 个房间`);
+    }
+    if (skippedCount > 0) {
+      summary.push(`跳过 ${skippedCount} 个缺少密码的加密房间`);
+    }
+    if (failedCount > 0) {
+      summary.push(`失败 ${failedCount} 个`);
+    }
+
+    alert(`${summary.join('，')}。`);
   };
 
-  // 清理
+
+  const handleToggleCanvasLock = () => {
+    setIsCanvasLocked((prev) => !prev);
+    setIsDraggingCanvas(false);
+    clearCanvasTouchHold();
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const shareInvite = parseShareInvitePayloadFromUrl(window.location.href);
+    const currentUrl = new URL(window.location.href);
+    const sharedRoomId = shareInvite?.stickyNotes?.roomId || currentUrl.searchParams.get('stickyRoomId');
+    const sharedEncrypted = shareInvite?.stickyNotes?.encrypted ? '1' : currentUrl.searchParams.get('stickyEncrypted');
+    const sharedMethod = shareInvite?.stickyNotes?.encryptionMethod || currentUrl.searchParams.get('stickyEncryptionMethod');
+    const sharedPassword = shareInvite?.stickyNotes?.password;
+    let hasSharedParams = false;
+
+    if (sharedRoomId) {
+      setRoomId(sharedRoomId);
+      hasSharedParams = true;
+    }
+
+    if (sharedEncrypted === '1') {
+      setEnableEncryption(true);
+      hasSharedParams = true;
+    }
+
+    if (sharedMethod && ENCRYPTION_METHODS.some((method) => method.value === sharedMethod)) {
+      setEncryptionMethod(sharedMethod as EncryptionMethod);
+      hasSharedParams = true;
+    }
+
+    if (sharedPassword) {
+      setPassword(sharedPassword);
+      setConfirmPassword(sharedPassword);
+      hasSharedParams = true;
+    }
+
+    if (hasSharedParams) {
+      currentUrl.searchParams.delete('stickyRoomId');
+      currentUrl.searchParams.delete('stickyEncrypted');
+      currentUrl.searchParams.delete('stickyEncryptionMethod');
+      const nextSearch = currentUrl.searchParams.toString();
+      const nextUrl = `${currentUrl.pathname}${nextSearch ? `?${nextSearch}` : ''}${currentUrl.hash}`;
+      window.history.replaceState({}, document.title, nextUrl);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshRecentRooms();
+  }, []);
+
+  useEffect(() => {
+    setBrandHeaderHidden(isInRoom);
+
+    return () => {
+      setBrandHeaderHidden(false);
+    };
+  }, [isInRoom, setBrandHeaderHidden]);
+
+  useEffect(() => {
+    if (!showColorPicker) {
+      setColorPickerPosition(null);
+      return;
+    }
+
+    updateColorPickerPosition();
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+
+      if (
+        colorPickerPanelRef.current?.contains(target) ||
+        colorPickerButtonRef.current?.contains(target)
+      ) {
+        return;
+      }
+
+      setShowColorPicker(false);
+    };
+
+    const handleReposition = () => {
+      updateColorPickerPosition();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('resize', handleReposition);
+    window.addEventListener('scroll', handleReposition, true);
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('resize', handleReposition);
+      window.removeEventListener('scroll', handleReposition, true);
+    };
+  }, [showColorPicker]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    localStorage.setItem('sticky_notes_canvas_locked', isCanvasLocked ? '1' : '0');
+  }, [isCanvasLocked]);
+
+  useEffect(() => {
+    if (!isInRoom) {
+      previousNoteIdsRef.current = new Set();
+      hasHydratedNotesRef.current = false;
+      return;
+    }
+
+    const previousNoteIds = previousNoteIdsRef.current;
+    const nextNoteIds = new Set(notes.map((note) => note.id));
+
+    if (!hasHydratedNotesRef.current) {
+      previousNoteIdsRef.current = nextNoteIds;
+      hasHydratedNotesRef.current = true;
+      return;
+    }
+
+    const addedRemoteNotes = notes
+      .filter((note) => !previousNoteIds.has(note.id))
+      .filter((note) => note.createdBy !== roomInfo?.userId)
+      .sort((a, b) => Math.max(b.updatedAt, b.createdAt) - Math.max(a.updatedAt, a.createdAt));
+
+    previousNoteIdsRef.current = nextNoteIds;
+
+    if (addedRemoteNotes.length === 0) {
+      return;
+    }
+
+    const newestRemoteNote = addedRemoteNotes[0];
+    window.setTimeout(() => {
+      focusNoteInViewport(newestRemoteNote);
+    }, 80);
+  }, [isInRoom, notes, roomInfo?.userId, canvasScale]);
+
   useEffect(() => {
     return () => {
+      clearCanvasTouchHold();
       if (roomRef.current) {
         roomRef.current.leaveRoom();
       }
@@ -352,49 +1062,57 @@ export function StickyNotesPage() {
   }, []);
 
   if (!isInRoom) {
-    // 房间加入页面
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 p-4 md:p-8">
-        <div className="max-w-xl mx-auto bg-white rounded-2xl shadow-xl p-6 md:p-8">
-          {/* Header - 移除标题，导航栏已有 */}
+      <div className="px-5 py-6 pb-14 sm:px-4">
+        <div className="mx-auto max-w-[480px]">
 
-          <div className="space-y-4">
-            {/* 昵称 */}
-            <div className="flex gap-2">
+          <div className="mb-7">
+            <p className="mb-1.5 font-['DM_Sans',_'Noto_Sans_SC',sans-serif] text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-600">MeshKit Notes Wall</p>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-950">{'便签墙'}</h1>
+            <p className="mt-3 text-sm leading-6 text-slate-600">
+              {'创建一个多人共享的自由画布，可以随时回到最近房间继续协作。'}
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <ExperienceBadge tone="emerald">{'实时协作'}</ExperienceBadge>
+              <ExperienceBadge tone="sky">{'自由拖拽'}</ExperienceBadge>
+              <ExperienceBadge tone="amber">{'可选端到端加密'}</ExperienceBadge>
+            </div>
+          </div>
+
+          <div className="mx-auto w-full max-w-5xl space-y-4 rounded-[14px] border border-[#e8ecf2] bg-white p-6 shadow-[0_1px_3px_rgba(26,31,54,0.04)]">
+            <div className="flex items-stretch gap-2">
               <input
                 type="text"
                 value={userName}
                 onChange={(e) => setUserName(e.target.value)}
                 placeholder="昵称"
-                className="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                className="min-w-0 flex-1 rounded-[10px] border border-[#e8ecf2] bg-white px-4 py-3 text-slate-900 shadow-sm transition-all focus:border-[#f59e0b] focus:outline-none focus:ring-4 focus:ring-[rgba(245,158,11,0.12)]"
               />
               <button
                 onClick={generateRandomUserName}
-                className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-all font-medium"
+                className="shrink-0 whitespace-nowrap rounded-[10px] border border-[#e8ecf2] bg-white px-4 py-3 text-[13px] font-medium text-[#5e6687] transition-all hover:border-[#f59e0b] hover:text-[#f59e0b] sm:px-5"
               >
                 随机
               </button>
             </div>
 
-            {/* 房间码 */}
-            <div className="flex gap-2">
+            <div className="flex items-stretch gap-2">
               <input
                 type="text"
                 value={roomId}
                 onChange={(e) => setRoomId(e.target.value)}
-                placeholder="房间码"
-                className="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                placeholder={'房间码'}
+                className="min-w-0 flex-1 rounded-[10px] border border-[#e8ecf2] bg-white px-4 py-3 text-slate-900 shadow-sm transition-all focus:border-[#f59e0b] focus:outline-none focus:ring-4 focus:ring-[rgba(245,158,11,0.12)]"
               />
               <button
                 onClick={generateRoomId}
-                className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-all font-medium"
+                className="shrink-0 whitespace-nowrap rounded-[10px] bg-[#1a1f36] px-4 py-3 text-[13px] font-medium text-white transition-all hover:bg-[#2d3352] sm:px-5"
               >
                 生成
               </button>
             </div>
 
-            {/* 加密选项 */}
-            <div className="flex items-center gap-3 px-1">
+            <div className="flex items-center gap-3 rounded-[10px] border border-[#f0f3f8] bg-[#f8fafd] px-4 py-3">
               <input
                 type="checkbox"
                 id="encryption"
@@ -407,7 +1125,6 @@ export function StickyNotesPage() {
               </label>
             </div>
 
-            {/* 密码和加密算法（加密时） */}
             {enableEncryption && (
               <>
                 <div>
@@ -418,7 +1135,7 @@ export function StickyNotesPage() {
                     <select
                       value={encryptionMethod}
                       onChange={(e) => setEncryptionMethod(e.target.value as EncryptionMethod)}
-                      className="w-full px-4 py-3 pr-10 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white text-gray-900 appearance-none cursor-pointer transition-all"
+                      className="w-full appearance-none rounded-[10px] border border-[#e8ecf2] bg-white px-4 py-3 pr-10 text-slate-900 shadow-sm transition-all focus:border-[#f59e0b] focus:outline-none focus:ring-4 focus:ring-[rgba(245,158,11,0.12)]"
                     >
                       {ENCRYPTION_METHODS.map((method) => (
                         <option key={method.value} value={method.value}>
@@ -446,7 +1163,7 @@ export function StickyNotesPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="请输入密码（至少4个字符）"
-                    className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                    className="w-full rounded-[10px] border border-[#e8ecf2] bg-white px-4 py-3 text-slate-900 shadow-sm transition-all focus:border-[#f59e0b] focus:outline-none focus:ring-4 focus:ring-[rgba(245,158,11,0.12)]"
                   />
                 </div>
 
@@ -458,432 +1175,175 @@ export function StickyNotesPage() {
                     type="password"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="请再次输入密码"
-                    className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                    placeholder={'请再次输入密码'}
+                    className="w-full rounded-[10px] border border-[#e8ecf2] bg-white px-4 py-3 text-slate-900 shadow-sm transition-all focus:border-[#f59e0b] focus:outline-none focus:ring-4 focus:ring-[rgba(245,158,11,0.12)]"
                   />
                 </div>
               </>
             )}
 
-            {/* 加入按钮 */}
             <button
               onClick={handleJoinRoom}
-              className="w-full py-3.5 bg-blue-500 text-white font-medium rounded-lg hover:bg-blue-600 transition-all shadow-sm hover:shadow-md"
+              className="w-full rounded-[10px] bg-[#f59e0b] px-6 py-3.5 text-sm font-semibold text-white shadow-[0_2px_8px_rgba(245,158,11,0.3)] transition-all hover:bg-[#d97706]"
             >
               {roomId ? '加入房间' : '创建房间'}
             </button>
 
-            {/* 说明 */}
             <div className="mt-6 pt-6 border-t border-gray-100">
-              <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 text-xs text-gray-500">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-green-500">●</span>
-                  <span>P2P 直连</span>
+              <div className="grid grid-cols-2 gap-2.5 text-xs text-[#5e6687] sm:grid-cols-4 sm:gap-3">
+                <div className="flex items-center gap-2 whitespace-nowrap rounded-full border border-[#eef2f8] bg-[#f8fafd] px-3 py-2">
+                  <span className="text-[#22c55e]">{'●'}</span>
+                  <span>{'P2P 直连'}</span>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-green-500">●</span>
-                  <span>实时协作</span>
+                <div className="flex items-center gap-2 whitespace-nowrap rounded-full border border-[#eef2f8] bg-[#f8fafd] px-3 py-2">
+                  <span className="text-[#22c55e]">{'●'}</span>
+                  <span>{'实时协作'}</span>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-green-500">●</span>
-                  <span>端到端加密</span>
+                <div className="flex items-center gap-2 whitespace-nowrap rounded-full border border-[#eef2f8] bg-[#f8fafd] px-3 py-2">
+                  <span className="text-[#22c55e]">{'●'}</span>
+                  <span>{'端到端加密'}</span>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-green-500">●</span>
-                  <span>本地存储</span>
+                <div className="flex items-center gap-2 whitespace-nowrap rounded-full border border-[#eef2f8] bg-[#f8fafd] px-3 py-2">
+                  <span className="text-[#22c55e]">{'●'}</span>
+                  <span>{'本地存储'}</span>
                 </div>
               </div>
+              </div>
             </div>
-          </div>
 
-          {/* Footer */}
-          <div className="mt-8 pt-6 border-t border-gray-200 text-center">
-            <p className="text-xs text-gray-400">MeshKit · P2P 协作工具套件</p>
+          {recentRooms.length > 0 && (
+            <div className="mx-auto mt-4 w-full max-w-5xl rounded-[14px] border border-[#e8ecf2] bg-white p-5 shadow-[0_1px_3px_rgba(26,31,54,0.04)]">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-900">{'最近房间'}</h2>
+                  <p className="mt-1 text-xs text-[#8e95b2]">{'未销毁且未过期的房间会保留在这里，方便继续进入。'}</p>
+                </div>
+                <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void refreshRecentRooms()}
+                    className="rounded-full border border-[#d7deeb] bg-white px-3 py-1 text-[12px] font-medium text-[#5e6687] transition hover:border-[#f59e0b] hover:text-[#f59e0b]"
+                  >
+                    {'刷新'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleDestroyAllRecentRooms()}
+                    disabled={isDestroyingAllRecentRooms || recentRoomActionId !== null || recentRooms.every((room) => !room.isOwner)}
+                    className="rounded-full border border-rose-200 bg-white px-3 py-1 text-[12px] font-medium text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isDestroyingAllRecentRooms ? '销毁中...' : '全部销毁'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2.5">
+                {recentRooms.map((room) => (
+                  <div
+                    key={room.id}
+                    className="flex w-full items-center justify-between gap-3 rounded-[12px] border border-[#edf2fb] bg-[#f8fafd] px-4 py-3 text-left transition hover:border-[#f7c56d] hover:bg-[#fffaf0]"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-sm font-semibold text-slate-900">{room.id}</span>
+                        {room.isEncrypted && (
+                          <span className="rounded-full bg-[#fff3d6] px-2 py-0.5 text-[11px] font-medium text-[#d97706]">
+                            {'加密'}
+                          </span>
+                        )}
+                        {room.isOwner && (<span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">{'房主'}</span>)}
+                        {typeof room.noteCount === 'number' && (
+                          <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">{room.noteCount}{' 张便签'}</span>
+                        )}
+                      </div>
+                      <div className="mt-1 text-[12px] text-[#8e95b2]">
+                        {room.expiresAt ? `剩余 ${formatRemainingTime(Math.max(room.expiresAt - Date.now(), 0))}` : '可继续进入'}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                      <button type="button" onClick={() => void handleEnterRecentRoom(room)} disabled={recentRoomActionId === room.id || isDestroyingAllRecentRooms} className="rounded-full bg-white px-3 py-1 text-[12px] font-medium text-[#5e6687] shadow-sm transition hover:text-[#f59e0b] disabled:cursor-not-allowed disabled:opacity-60">{recentRoomActionId === room.id ? '处理中...' : '进入'}</button>
+                      {room.isOwner && <button type="button" onClick={() => void handleDestroyRecentRoom(room)} disabled={recentRoomActionId === room.id || isDestroyingAllRecentRooms} className="rounded-full border border-rose-200 bg-white px-3 py-1 text-[12px] font-medium text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60">{'销毁'}</button>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="mt-8 pt-6 border-t border-[#f0f3f8] text-center">
+            <p className="text-xs text-gray-400">{'MeshKit · P2P 协作工具套件'}</p>
           </div>
         </div>
       </div>
     );
   }
 
-  // 便签墙页面
   return (
-    <div className="h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col overflow-hidden">
-      {/* 顶部工具栏 */}
-      <div className="bg-white border-b border-gray-200 px-3 sm:px-6 py-3 sm:py-4 flex-shrink-0">
-        <div className="max-w-7xl mx-auto">
-          {/* 移动端：垂直布局 */}
-          <div className="flex flex-col sm:hidden gap-3">
-            {/* 连接状态 */}
-            <div className="flex items-center justify-center gap-2 text-xs">
-              <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-              <span className="text-gray-600">
-                {isConnected ? `已连接 (${peerCount} 人)` : '未连接'}
-              </span>
+    <div className="relative flex min-h-[calc(100dvh-156px)] flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.12),_transparent_28%),linear-gradient(180deg,_#f8fbff_0%,_#edf4ff_100%)] px-3 pb-3 pt-3 sm:min-h-[calc(100dvh-168px)] sm:px-4 sm:py-4">
+      <div className="relative z-20 flex-shrink-0 overflow-visible rounded-[28px] border border-white/70 bg-white/88 px-3 py-3 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur sm:px-6 sm:py-4">
+        <div className="mx-auto max-w-7xl">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-[12px] font-medium text-[#5e6687]">
+                <span
+                  className={`h-2.5 w-2.5 rounded-full ${
+                    isConnected
+                      ? 'bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.14)]'
+                      : 'bg-rose-500 shadow-[0_0_0_4px_rgba(244,63,94,0.14)]'
+                  }`}
+                />
+                <span>{isConnected ? `已连接 · ${Math.max(users.length, 1)} 人` : '等待连接'}</span>
+              </div>
+              <div className="rounded-full border border-[#e8ecf2] bg-[#f8fafd] px-3 py-1 text-[11px] font-medium text-[#8e95b2]">
+                {isCanvasLocked ? '画布已锁定' : '长按拖动画布/便签'}
+              </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 justify-center">
-              {/* 房间信息 */}
-              <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg flex-shrink-0">
-                <span className="text-sm text-gray-600">房间:</span>
-                <span className="text-sm font-mono font-medium text-gray-900">
-                  {roomInfo?.roomId}
-                </span>
-                {roomInfo?.isEncrypted && (
-                  <span
-                    className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-full"
-                    title={`端到端加密已启用 (${roomInfo?.encryptionMethod || '未知算法'})`}
-                  >
-                    🔒 {roomInfo?.encryptionMethod || '加密'}
-                  </span>
-                )}
-                <button
-                  onClick={copyRoomId}
-                  className="text-xs px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 touch-manipulation min-h-[28px]"
-                >
-                  复制
-                </button>
-              </div>
-
-              {/* 用户信息 */}
-              <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg flex-shrink-0">
-                <div
-                  className="w-3 h-3 rounded-full flex-shrink-0"
-                  style={{ backgroundColor: roomInfo?.userColor }}
-                />
-                {isEditingName ? (
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="text"
-                      value={tempUserName}
-                      onChange={(e) => setTempUserName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleSaveName();
-                        if (e.key === 'Escape') handleCancelEditName();
-                      }}
-                      className="text-sm px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[80px]"
-                      placeholder="输入昵称"
-                      autoFocus
-                    />
-                    <button
-                      onClick={handleSaveName}
-                      className="text-xs px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 touch-manipulation min-h-[28px]"
-                    >
-                      ✓
-                    </button>
-                    <button
-                      onClick={handleCancelEditName}
-                      className="text-xs px-2 py-1 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 touch-manipulation min-h-[28px]"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <span className="text-sm text-gray-900 truncate max-w-[100px]">{roomInfo?.userName}</span>
-                    <button
-                      onClick={handleStartEditName}
-                      className="text-sm text-blue-500 hover:text-blue-700 touch-manipulation min-w-[24px] min-h-[24px]"
-                      title="编辑昵称"
-                    >
-                      ✎
-                    </button>
-                  </>
-                )}
-              </div>
-
-              {/* 在线用户 */}
-              {users.length > 1 && (
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  {users
-                    .filter(u => u.id !== roomInfo?.userId)
-                    .slice(0, 3)
-                    .map((user) => (
-                      <div
-                        key={user.id}
-                        className="w-8 h-8 rounded-full flex items-center justify-center text-xs text-white font-medium flex-shrink-0"
-                        style={{ backgroundColor: user.color }}
-                        title={user.name}
-                      >
-                        {user.name.charAt(0)}
-                      </div>
-                    ))}
-                  {users.length > 4 && (
-                    <div className="text-xs text-gray-500 ml-1">
-                      +{users.length - 4}
-                    </div>
+            <div className="overflow-x-auto pb-1">
+              <div className="flex w-max min-w-full items-center gap-2 px-1 sm:flex-wrap sm:px-0">
+                <div className="flex items-center gap-2 rounded-full border border-[#d7deeb] bg-[#f8fafd] px-3 py-2 text-[12px]">
+                  <span className="text-[#8e95b2]">{'房间'}</span>
+                  <span className="font-mono font-semibold text-slate-900">{roomInfo?.roomId}</span>
+                  {roomInfo?.isEncrypted && (
+                    <span className="rounded-full bg-[#fff3d6] px-2 py-0.5 text-[11px] font-medium text-[#d97706]">
+                      {roomInfo?.encryptionMethod || '加密'}
+                    </span>
                   )}
                 </div>
-              )}
-
-              {/* 添加便签按钮 */}
-              <div className="relative flex-shrink-0">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowColorPicker(!showColorPicker);
-                  }}
-                  className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-medium text-sm touch-manipulation min-h-[36px]"
-                >
-                  + 添加便签
-                </button>
-
-                {/* 颜色选择器 */}
-                {showColorPicker && (
-                  <div
-                    className="absolute left-1/2 -translate-x-1/2 mt-2 p-3 bg-white rounded-xl shadow-2xl border border-gray-200 z-[100] min-w-[100px]"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <p className="text-sm font-medium text-gray-700 mb-3 text-center">选择颜色</p>
-                    <div className="grid grid-cols-2 gap-1 place-items-center mb-3">
-                      {colors.map((color) => (
-                        <button
-                          key={color}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleAddNote(color);
-                          }}
-                          className="w-5 h-5 rounded-xl border-2 border-gray-300 hover:border-gray-500 hover:scale-110 transition-all touch-manipulation shadow-sm"
-                          style={{ backgroundColor: color }}
-                          title={color}
-                        />
-                      ))}
-                    </div>
-                    {/* 自定义颜色 */}
-                    <div className="border-t border-gray-200 pt-3">
-                      <p className="text-xs text-gray-600 mb-2 text-center">自定义颜色</p>
-                      <div className="flex gap-2">
-                        <input
-                          type="color"
-                          value={customColor}
-                          onChange={(e) => setCustomColor(e.target.value)}
-                          className="w-12 h-12 rounded-lg cursor-pointer border-2 border-gray-300"
-                          title="选择自定义颜色"
-                        />
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleAddNote(customColor);
-                          }}
-                          className="flex-1 px-3 py-2 bg-blue-500 text-white text-sm rounded-lg hover:bg-blue-600 transition-colors touch-manipulation"
-                        >
-                          使用
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* 离开按钮 */}
-              <button
-                onClick={handleLeaveRoom}
-                className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors font-medium text-sm touch-manipulation min-h-[36px] flex-shrink-0"
-              >
-                离开房间
-              </button>
-
-              {/* 销毁房间按钮 */}
-              <button
-                onClick={handleDestroyRoom}
-                className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors font-medium text-sm touch-manipulation min-h-[36px] flex-shrink-0"
-              >
-                销毁房间
-              </button>
-            </div>
-          </div>
-
-          {/* 桌面端：居中布局 */}
-          <div className="hidden sm:block">
-            {/* 连接状态 */}
-            <div className="flex items-center justify-center gap-4 mb-3">
-              <div className="flex items-center gap-2 text-sm">
-                <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-                <span className="text-gray-600">
-                  {isConnected ? `已连接 (${peerCount} 人)` : '未连接'}
-                </span>
-              </div>
-            </div>
-
-            {/* 功能按钮（居中） */}
-            <div className="flex flex-wrap items-center gap-3 justify-center">
-              {/* 房间信息 */}
-              <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg flex-shrink-0">
-                <span className="text-sm text-gray-600">房间:</span>
-                <span className="text-sm font-mono font-medium text-gray-900">
-                  {roomInfo?.roomId}
-                </span>
-                {roomInfo?.isEncrypted && (
-                  <span
-                    className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-full"
-                    title={`端到端加密已启用 (${roomInfo?.encryptionMethod || '未知算法'})`}
-                  >
-                    🔒 {roomInfo?.encryptionMethod || '加密'}
-                  </span>
-                )}
-                <button
-                  onClick={copyRoomId}
-                  className="text-xs px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 touch-manipulation min-h-[28px]"
-                >
-                  复制
-                </button>
-              </div>
-
-              {/* 用户信息 */}
-              <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg flex-shrink-0">
-                <div
-                  className="w-3 h-3 rounded-full flex-shrink-0"
-                  style={{ backgroundColor: roomInfo?.userColor }}
-                />
+                <button type="button" onClick={copyRoomId} className="rounded-full border border-[#d7deeb] bg-white px-3.5 py-2 text-[12px] font-medium text-[#5e6687] transition hover:border-slate-300 hover:bg-[#f8fafd]">{'复制'}</button>
+                <button type="button" onClick={shareRoom} disabled={isSharingRoom} className="rounded-full border border-sky-200 bg-sky-50 px-3.5 py-2 text-[12px] font-medium text-sky-700 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-60">{isSharingRoom ? '分享中...' : '分享'}</button>
+                <button type="button" onClick={handleRefreshRoom} disabled={isRefreshingRoom} className="rounded-full border border-[#d7deeb] bg-white px-3.5 py-2 text-[12px] font-medium text-[#5e6687] transition hover:border-slate-300 hover:bg-[#f8fafd] disabled:cursor-not-allowed disabled:opacity-60">{isRefreshingRoom ? '刷新中...' : '刷新'}</button>
+                <button type="button" onClick={handleLocateLatestNote} disabled={notes.length === 0} className="rounded-full border border-[#d7deeb] bg-white px-3.5 py-2 text-[12px] font-medium text-[#5e6687] transition hover:border-slate-300 hover:bg-[#f8fafd] disabled:cursor-not-allowed disabled:opacity-50">{'找最新便签'}</button>
                 {isEditingName ? (
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="text"
-                      value={tempUserName}
-                      onChange={(e) => setTempUserName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleSaveName();
-                        if (e.key === 'Escape') handleCancelEditName();
-                      }}
-                      className="text-sm px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[80px]"
-                      placeholder="输入昵称"
-                      autoFocus
-                    />
-                    <button
-                      onClick={handleSaveName}
-                      className="text-xs px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 touch-manipulation min-h-[28px]"
-                    >
-                      ✓
-                    </button>
-                    <button
-                      onClick={handleCancelEditName}
-                      className="text-xs px-2 py-1 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 touch-manipulation min-h-[28px]"
-                    >
-                      ✕
-                    </button>
+                  <div className="flex items-center gap-2 rounded-full border border-[#d7deeb] bg-white px-3 py-1.5">
+                    <input type="text" value={tempUserName} onChange={(e) => setTempUserName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleSaveName(); if (e.key === 'Escape') handleCancelEditName(); }} className="w-28 bg-transparent text-[12px] text-slate-900 outline-none" placeholder={'输入昵称'} autoFocus />
+                    <button type="button" onClick={handleSaveName} className="rounded-full bg-sky-600 px-2.5 py-1 text-[11px] font-medium text-white">{'保存'}</button>
+                    <button type="button" onClick={handleCancelEditName} className="rounded-full border border-[#d7deeb] px-2.5 py-1 text-[11px] font-medium text-[#5e6687]">{'取消'}</button>
                   </div>
                 ) : (
-                  <>
-                    <span className="text-sm text-gray-900 truncate max-w-[100px]">{roomInfo?.userName}</span>
-                    <button
-                      onClick={handleStartEditName}
-                      className="text-sm text-blue-500 hover:text-blue-700 touch-manipulation min-w-[24px] min-h-[24px]"
-                      title="编辑昵称"
-                    >
-                      ✎
-                    </button>
-                  </>
+                  <button type="button" onClick={handleStartEditName} className="flex items-center gap-2 rounded-full border border-[#d7deeb] bg-white px-3 py-2 text-[12px] text-slate-700 transition hover:border-sky-300">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: roomInfo?.userColor }} />
+                    <span className="max-w-[120px] truncate font-medium">{roomInfo?.userName}</span>
+                    <span className="text-[#8e95b2]">{'改昵称'}</span>
+                  </button>
                 )}
-              </div>
-
-              {/* 在线用户 */}
-              {users.length > 1 && (
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  {users
-                    .filter(u => u.id !== roomInfo?.userId)
-                    .slice(0, 3)
-                    .map((user) => (
-                      <div
-                        key={user.id}
-                        className="w-8 h-8 rounded-full flex items-center justify-center text-xs text-white font-medium flex-shrink-0"
-                        style={{ backgroundColor: user.color }}
-                        title={user.name}
-                      >
-                        {user.name.charAt(0)}
-                      </div>
-                    ))}
-                  {users.length > 4 && (
-                    <div className="text-xs text-gray-500 ml-1">
-                      +{users.length - 4}
-                    </div>
-                  )}
+                <div className="relative shrink-0">
+                  <button ref={colorPickerButtonRef} type="button" onClick={(e) => { e.stopPropagation(); if (!showColorPicker) { updateColorPickerPosition(); } setShowColorPicker((prev) => !prev); }} className="rounded-full bg-sky-600 px-4 py-2 text-[12px] font-semibold text-white shadow-[0_8px_20px_rgba(14,165,233,0.22)] transition hover:bg-sky-700">{'+ 添加便签'}</button>
                 </div>
-              )}
-
-              {/* 添加便签按钮 */}
-              <div className="relative flex-shrink-0">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowColorPicker(!showColorPicker);
-                  }}
-                  className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-medium text-sm touch-manipulation min-h-[36px]"
-                >
-                  + 添加便签
-                </button>
-
-                {/* 颜色选择器 */}
-                {showColorPicker && (
-                  <div
-                    className="absolute left-1/2 -translate-x-1/2 mt-2 p-3 bg-white rounded-xl shadow-2xl border border-gray-200 z-[100] min-w-[100px]"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <p className="text-sm font-medium text-gray-700 mb-3 text-center">选择颜色</p>
-                    <div className="grid grid-cols-2 gap-1 place-items-center mb-3">
-                      {colors.map((color) => (
-                        <button
-                          key={color}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleAddNote(color);
-                          }}
-                          className="w-5 h-5 rounded-xl border-2 border-gray-300 hover:border-gray-500 hover:scale-110 transition-all touch-manipulation shadow-sm"
-                          style={{ backgroundColor: color }}
-                          title={color}
-                        />
-                      ))}
-                    </div>
-                    {/* 自定义颜色 */}
-                    <div className="border-t border-gray-200 pt-3">
-                      <p className="text-xs text-gray-600 mb-2 text-center">自定义颜色</p>
-                      <div className="flex gap-2">
-                        <input
-                          type="color"
-                          value={customColor}
-                          onChange={(e) => setCustomColor(e.target.value)}
-                          className="w-12 h-12 rounded-lg cursor-pointer border-2 border-gray-300"
-                          title="选择自定义颜色"
-                        />
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleAddNote(customColor);
-                          }}
-                          className="flex-1 px-3 py-2 bg-blue-500 text-white text-sm rounded-lg hover:bg-blue-600 transition-colors touch-manipulation"
-                        >
-                          使用
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                <button type="button" onClick={handleToggleCanvasLock} className={`rounded-full px-3.5 py-2 text-[12px] font-medium transition ${isCanvasLocked ? 'border border-amber-200 bg-amber-50 text-amber-700' : 'border border-[#d7deeb] bg-white text-[#5e6687] hover:border-slate-300 hover:bg-[#f8fafd]'}`}>{isCanvasLocked ? '解锁画布' : '锁定画布'}</button>
+                <button type="button" onClick={() => void handleLeaveRoom()} className="rounded-full border border-[#d7deeb] bg-white px-3.5 py-2 text-[12px] font-medium text-[#5e6687] transition hover:border-slate-300 hover:bg-[#f8fafd]">{'离开'}</button>
+                <button type="button" onClick={() => void handleDestroyRoom()} className="rounded-full bg-rose-600 px-3.5 py-2 text-[12px] font-semibold text-white transition hover:bg-rose-700">{'销毁'}</button>
               </div>
-
-              {/* 离开按钮 */}
-              <button
-                onClick={handleLeaveRoom}
-                className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors font-medium text-sm touch-manipulation min-h-[36px] flex-shrink-0"
-              >
-                离开房间
-              </button>
-
-              {/* 销毁房间按钮 */}
-              <button
-                onClick={handleDestroyRoom}
-                className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors font-medium text-sm touch-manipulation min-h-[36px] flex-shrink-0"
-              >
-                销毁房间
-              </button>
             </div>
           </div>
         </div>
       </div>
-
-      {/* 便签墙区域 */}
       <div
         ref={wallRef}
-        className="flex-1 relative overflow-hidden select-none"
+        className="relative mt-3 min-h-[360px] flex-1 overflow-hidden rounded-[30px] border border-white/70 bg-white/55 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] select-none sm:min-h-[420px]"
         style={{
-          cursor: isDraggingCanvas ? 'grabbing' : 'grab',
+          cursor: isCanvasLocked ? 'default' : isDraggingCanvas ? 'grabbing' : 'grab',
+          touchAction: isCanvasLocked ? 'auto' : 'none',
         }}
         onClick={() => setShowColorPicker(false)}
         onPointerDown={handleCanvasPointerDown}
@@ -903,9 +1363,9 @@ export function StickyNotesPage() {
         >
           {notes.length === 0 ? (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="text-center">
-                <p className="text-gray-400 text-lg mb-2">还没有便签</p>
-                <p className="text-gray-300 text-sm">点击右上角"添加便签"开始创建</p>
+              <div className="rounded-[24px] border border-dashed border-[#d7e3f5] bg-white/50 px-8 py-8 text-center shadow-[0_10px_30px_rgba(15,23,42,0.04)]">
+                <p className="mb-2 text-lg font-semibold text-slate-700">{'还没有便签'}</p>
+                <p className="text-sm text-[#8e95b2]">{'点击右上角的“添加便签”，或者让其他成员在房间里一起创建。'}</p>
               </div>
             </div>
           ) : (
@@ -921,64 +1381,122 @@ export function StickyNotesPage() {
           )}
         </div>
 
-        {/* 缩放控制器 - 浮动在画布右下角 */}
-        <div className="absolute bottom-4 right-4 bg-white rounded-lg shadow-lg border border-gray-200 p-3 flex items-center gap-3 z-10">
-          <span className="text-sm text-gray-600 font-medium">缩放</span>
+        {isCanvasTouchPending && !isDraggingCanvas && !isCanvasLocked && (
+          <div className="pointer-events-none absolute left-1/2 top-6 z-20 -translate-x-1/2 rounded-full bg-slate-900/72 px-4 py-1.5 text-[11px] font-medium text-white shadow-lg">
+            {'长按后再拖动画布或便签'}
+          </div>
+        )}
+        <div className="absolute bottom-4 right-4 z-20 flex items-center gap-2 rounded-[20px] border border-white/70 bg-white/92 p-2.5 shadow-[0_16px_36px_rgba(15,23,42,0.12)] backdrop-blur">
           <button
-            onClick={() => setCanvasScale(Math.max(0.5, canvasScale - 0.1))}
-            className="w-8 h-8 flex items-center justify-center bg-gray-100 hover:bg-gray-200 rounded text-gray-700 font-bold transition-colors"
-            title="缩小"
+            type="button"
+            onClick={() => setCanvasScale((prev) => Math.max(0.5, +(prev - 0.1).toFixed(2)))}
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-[#d7deeb] bg-white text-base font-semibold text-slate-700 transition hover:border-sky-300"
+            title={'缩小画布'}
           >
             -
           </button>
-          <input
-            type="range"
-            min="50"
-            max="300"
-            step="10"
-            value={canvasScale * 100}
-            onChange={(e) => setCanvasScale(parseInt(e.target.value) / 100)}
-            className="w-32 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-            style={{
-              background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((canvasScale - 0.5) / 2.5) * 100}%, #e5e7eb ${((canvasScale - 0.5) / 2.5) * 100}%, #e5e7eb 100%)`
-            }}
-          />
+          <div className="min-w-[54px] text-center text-[12px] font-semibold text-slate-700">{Math.round(canvasScale * 100)}%</div>
           <button
-            onClick={() => setCanvasScale(Math.min(3, canvasScale + 0.1))}
-            className="w-8 h-8 flex items-center justify-center bg-gray-100 hover:bg-gray-200 rounded text-gray-700 font-bold transition-colors"
-            title="放大"
+            type="button"
+            onClick={() => setCanvasScale((prev) => Math.min(3, +(prev + 0.1).toFixed(2)))}
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-[#d7deeb] bg-white text-base font-semibold text-slate-700 transition hover:border-sky-300"
+            title={'放大画布'}
           >
             +
           </button>
-          <span className="text-sm text-gray-700 font-mono min-w-[3rem] text-center">
-            {Math.round(canvasScale * 100)}%
-          </span>
           <button
-            onClick={() => setCanvasScale(1)}
-            className="px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white text-xs rounded transition-colors"
-            title="重置缩放"
+            type="button"
+            onClick={() => {
+              setCanvasScale(1);
+              setCanvasOffset({ x: 0, y: 0 });
+            }}
+            className="rounded-full bg-sky-600 px-3 py-2 text-[12px] font-semibold text-white transition hover:bg-sky-700"
+            title={'重置缩放和位置'}
           >
-            重置
+            {'重置视图'}
           </button>
         </div>
       </div>
 
-      {/* 底部提示 */}
-      <div className="bg-white border-t border-gray-200 px-3 sm:px-6 py-2 sm:py-3 flex-shrink-0">
-        <div className="flex flex-col sm:flex-row items-center justify-between text-xs text-gray-500 gap-1">
-          <div className="truncate">
-            房间: {roomInfo?.roomId}
+      <div className="mt-3 flex-shrink-0 rounded-[20px] border border-white/70 bg-white/90 px-4 py-3 shadow-[0_12px_32px_rgba(15,23,42,0.06)] backdrop-blur">
+        <div className="flex flex-col gap-2 text-[12px] text-[#5e6687] sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0 truncate font-medium text-slate-700">
+            {'房间号: '}{roomInfo?.roomId}
             {roomExpiresIn !== null && (
-              <span className="ml-2 text-orange-600">
-                · ⏱️ {formatRemainingTime(roomExpiresIn)}后过期
+              <span className="ml-2 text-[#d97706]">
+                {'剩余 '}{formatRemainingTime(roomExpiresIn)}
               </span>
             )}
           </div>
-          <div className="whitespace-nowrap">
-            {notes.length} 个便签 · {users.length} 人在线
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <span className="rounded-full bg-[#f8fafd] px-3 py-1 font-medium text-slate-700">{'便签数: '}{notes.length}</span>
+            <span className="rounded-full bg-[#f8fafd] px-3 py-1 font-medium text-slate-700">{'在线人数: '}{users.length}</span>
           </div>
         </div>
       </div>
+
+      {showColorPicker && colorPickerPosition && (
+        <div
+          ref={colorPickerPanelRef}
+          className="fixed z-[400] w-[220px] rounded-[18px] border border-[#e8ecf2] bg-white p-3 shadow-[0_18px_40px_rgba(15,23,42,0.14)]"
+          style={{
+            top: colorPickerPosition.top,
+            left: colorPickerPosition.left,
+          }}
+        >
+          <p className="mb-3 text-sm font-semibold text-slate-900">{'选择便签颜色'}</p>
+          <div className="grid grid-cols-4 gap-2">
+            {colors.map((color) => (
+              <button
+                key={color}
+                type="button"
+                onClick={() => {
+                  void handleAddNote(color);
+                }}
+                className="h-9 w-9 rounded-2xl border-2 border-white shadow-sm transition hover:scale-105 hover:border-slate-300"
+                style={{ backgroundColor: color }}
+                title={color}
+              />
+            ))}
+          </div>
+          <div className="mt-3 border-t border-[#eef2f8] pt-3">
+            <div className="mb-2 text-[12px] font-medium text-[#5e6687]">{'自定义颜色'}</div>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={customColor}
+                onChange={(e) => setCustomColor(e.target.value)}
+                className="h-10 w-10 cursor-pointer rounded-xl border border-[#d7deeb] bg-transparent"
+                title={'选择自定义颜色'}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  void handleAddNote(customColor);
+                }}
+                className="flex-1 rounded-[12px] bg-sky-600 px-3 py-2 text-[12px] font-semibold text-white transition hover:bg-sky-700"
+              >
+                {'使用这个颜色'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ShareLinkDialog
+        open={showShareDialog}
+        shareUrl={shareUrl}
+        title={'分享便签墙'}
+        description={'可以直接复制链接，或者让对方扫码打开当前房间。'}
+        qrTitle={'扫码进入便签墙'}
+        qrCaption={'二维码会包含房间号、加密设置和当前链接参数。'}
+        downloadQrFileName={`meshkit-sticky-notes-${roomInfo?.roomId || roomId.trim() || 'room'}.png`}
+        isSystemShareSupported={typeof navigator !== 'undefined' && typeof navigator.share === 'function'}
+        isSystemSharing={isSystemSharingRoom}
+        onClose={() => setShowShareDialog(false)}
+        onCopyLink={handleCopyShareLink}
+        onSystemShare={handleNativeShare}
+      />
 
       {showDestroyPasswordDialog && (
         <PasswordConfirmDialog

@@ -23,6 +23,7 @@ export class ChatRoom {
   private myName: string = '';
   private myColor: string = '';
   private myUserId: string = '';
+  private myOwnerId: string = '';
   private roomPassword: string = ''; // 房间密码（用于加密）
   private encryptionMethod: EncryptionMethod = 'AES-256-CBC'; // 加密算法
 
@@ -48,6 +49,7 @@ export class ChatRoom {
 
   // 房间过期检查定时器
   private expirationCheckInterval: NodeJS.Timeout | null = null;
+  private hasHandledDestroyedRoom = false;
 
   /**
    * 初始化并加入房间
@@ -75,6 +77,7 @@ export class ChatRoom {
     this.myColor = color;
     this.roomPassword = config.password || '';
     this.encryptionMethod = config.encryptionMethod;
+    this.hasHandledDestroyedRoom = false;
 
     // 保存用户偏好
     chatStorage.saveUserName(name);
@@ -93,7 +96,8 @@ export class ChatRoom {
       privateKey: chatCrypto.fromBase64(roomData.keyPair.privateKey),
       publicKeyHex: roomData.keyPair.publicKeyHex,
     };
-    this.myUserId = this.myKeyPair.publicKeyHex;
+    this.myOwnerId = this.myKeyPair.publicKeyHex;
+    this.myUserId = this.getOrCreateSessionUserId();
 
     // 使用已有房间的加密算法（如果加入已有房间）
     this.encryptionMethod = roomData.encryptionMethod;
@@ -172,6 +176,16 @@ export class ChatRoom {
     });
 
     // 密码验证：检查房间是否已有密码验证令牌
+    const existingDestroyedAt = this.yRoomAuth.get('destroyedAt');
+    if (this.yRoomAuth.get('destroyed')) {
+      chatStorage.destroyRoom(
+        this.roomId,
+        typeof existingDestroyedAt === 'number' ? existingDestroyedAt : Date.now(),
+      );
+      await this.leaveRoom();
+      throw new Error('这个房间已被销毁，无法再次进入。');
+    }
+
     const existingAuthToken = this.yRoomAuth.get('token') as string | undefined;
     const existingMethod = this.yRoomAuth.get('method') as EncryptionMethod | undefined;
 
@@ -222,6 +236,8 @@ export class ChatRoom {
     }
 
     // 添加当前用户
+    const roomOwner = this.ensureRoomOwner();
+    chatStorage.updateRoomOwner(this.roomId, roomOwner.ownerUserId, roomOwner.ownerName);
     this.yUsers.set(this.myUserId, {
       id: this.myUserId,
       name: this.myName,
@@ -241,6 +257,23 @@ export class ChatRoom {
     // 监听用户变化
     this.yUsers.observe(() => {
       this.handleUsersChange();
+    });
+
+    this.yRoomAuth.observe(() => {
+      if (!this.yRoomAuth?.get('destroyed') || this.hasHandledDestroyedRoom) {
+        return;
+      }
+
+      this.hasHandledDestroyedRoom = true;
+      const destroyedAt = this.yRoomAuth.get('destroyedAt');
+      chatStorage.destroyRoom(
+        this.roomId,
+        typeof destroyedAt === 'number' ? destroyedAt : Date.now(),
+      );
+
+      if (this.onRoomDestroyed) {
+        this.onRoomDestroyed();
+      }
     });
 
     // 监听连接状态
@@ -293,11 +326,55 @@ export class ChatRoom {
 
     console.log('[ChatRoom] Joined room:', this.roomId);
     console.log('[ChatRoom] My User ID:', this.myUserId);
+    console.log('[ChatRoom] My Owner ID:', this.myOwnerId);
+  }
+
+  private getOrCreateSessionUserId(): string {
+    const storageKey = 'encrypted_chat_session_user_id';
+
+    try {
+      const existingId = sessionStorage.getItem(storageKey);
+      if (existingId) {
+        return existingId;
+      }
+
+      const nextId = `chat_user_${Math.random().toString(36).slice(2, 10)}`;
+      sessionStorage.setItem(storageKey, nextId);
+      return nextId;
+    } catch (error) {
+      console.warn('[ChatRoom] Failed to access sessionStorage for user id:', error);
+      return `chat_user_${Math.random().toString(36).slice(2, 10)}`;
+    }
   }
 
   /**
    * 处理接收到的消息
    */
+  private ensureRoomOwner(): { ownerUserId: string; ownerName: string } {
+    const existingOwnerUserId = this.yRoomAuth?.get('ownerUserId');
+    const existingOwnerName = this.yRoomAuth?.get('ownerName');
+
+    const ownerUserId = typeof existingOwnerUserId === 'string' && existingOwnerUserId
+      ? existingOwnerUserId
+      : this.myOwnerId;
+    const ownerName = typeof existingOwnerName === 'string' && existingOwnerName
+      ? existingOwnerName
+      : ownerUserId === this.myOwnerId
+        ? this.myName
+        : '';
+
+    if (this.yRoomAuth) {
+      if (existingOwnerUserId !== ownerUserId) {
+        this.yRoomAuth.set('ownerUserId', ownerUserId);
+      }
+
+      if (ownerName && existingOwnerName !== ownerName) {
+        this.yRoomAuth.set('ownerName', ownerName);
+      }
+    }
+
+    return { ownerUserId, ownerName };
+  }
   private handleIncomingMessage(data: any): void {
     if (!this.roomPassword) return;
 
@@ -535,17 +612,45 @@ export class ChatRoom {
     }
 
     // 销毁房间
-    chatStorage.destroyRoom(this.roomId);
+    this.markRoomDestroyed();
 
     // 触发回调
-    if (this.onRoomDestroyed) {
-      this.onRoomDestroyed();
-    }
   }
 
   /**
    * 获取我的用户ID
    */
+  private markRoomDestroyed(): void {
+    if (!this.roomId) {
+      return;
+    }
+
+    const destroyedAt = Date.now();
+    this.hasHandledDestroyedRoom = true;
+
+    if (this.ydoc && this.yRoomAuth) {
+      this.ydoc.transact(() => {
+        if (this.yMessages && this.yMessages.length > 0) {
+          this.yMessages.delete(0, this.yMessages.length);
+        }
+
+        if (this.yUsers) {
+          const userIds: string[] = [];
+          this.yUsers.forEach((_, userId) => {
+            userIds.push(userId);
+          });
+          userIds.forEach((userId) => this.yUsers?.delete(userId));
+        }
+
+        this.yRoomAuth?.set('destroyed', true);
+        this.yRoomAuth?.set('destroyedAt', destroyedAt);
+      });
+    }
+
+    chatStorage.destroyRoom(this.roomId, destroyedAt);
+
+  }
+
   getMyUserId(): string {
     return this.myUserId;
   }
@@ -612,6 +717,22 @@ export class ChatRoom {
   /**
    * 离开房间
    */
+  getRoomInfo(): {
+    roomId: string;
+    ownerUserId?: string;
+    ownerName?: string;
+    isOwner: boolean;
+  } {
+    const ownerUserId = this.yRoomAuth?.get('ownerUserId');
+    const ownerName = this.yRoomAuth?.get('ownerName');
+
+    return {
+      roomId: this.roomId,
+      ownerUserId: typeof ownerUserId === 'string' ? ownerUserId : undefined,
+      ownerName: typeof ownerName === 'string' ? ownerName : undefined,
+      isOwner: typeof ownerUserId === 'string' ? ownerUserId === this.myOwnerId : false,
+    };
+  }
   async leaveRoom(): Promise<void> {
     // 清除所有自毁定时器
     this.selfDestructTimers.forEach((timer) => clearTimeout(timer));
@@ -653,7 +774,12 @@ export class ChatRoom {
    * 销毁房间（主动销毁，无痕删除）
    */
   async destroyRoom(): Promise<void> {
-    chatStorage.destroyRoom(this.roomId);
+    const roomInfo = this.getRoomInfo();
+    if (roomInfo.ownerUserId && !roomInfo.isOwner) {
+      throw new Error('只有房主可以销毁这个房间');
+    }
+
+    this.markRoomDestroyed();
     await this.leaveRoom();
     console.log('[ChatRoom] Room destroyed');
   }
