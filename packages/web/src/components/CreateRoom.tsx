@@ -1,37 +1,52 @@
 /**
- * CreateRoom - 创建房间界面（支持多文件）
+ * CreateRoom - 生成取件码界面
  */
-import { useState, useRef } from 'react';
+import { useRef, useState } from 'react';
+import { fileTransferManager, type FileQueueItem } from '@meshkit/core';
 import { useRoom } from '../hooks/useRoom';
 import { useAppStore } from '../store';
-import { fileTransferManager } from '@meshkit/core';
+import { ExperienceCard } from './ExperienceShell';
 import { FileQueue } from './FileQueue';
+import { TransferInboxIcon } from './FileTransferIcons';
 import { RoomPasswordDialog } from './RoomPasswordDialog';
+import { savePickupSharePassword } from '../utils/pickupShare';
 
 export function CreateRoom() {
   const { createRoom, isCreating, error, updateRoomFiles, currentRoom } = useRoom();
   const { fileQueue, isQueueMode } = useAppStore();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const addFilesInputRef = useRef<HTMLInputElement>(null);
+
+  const syncRoomFiles = () => {
+    if (!currentRoom) return;
+
+    const currentQueue = fileTransferManager.getFileQueue();
+    const updatedFileList = currentQueue.map((item) => ({
+      ...item.metadata,
+      index: item.index,
+    }));
+
+    updateRoomFiles(updatedFileList);
+  };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    // 先清空之前的选择
     fileTransferManager.fullReset();
     setSelectedFile(null);
 
     if (files.length === 1) {
-      // 单文件模式
       setSelectedFile(files[0]);
     } else {
-      // 多文件模式 - Room模式跳过验证，避免大文件阻塞
-      const filesArray = Array.from(files);
-      await fileTransferManager.selectFiles(filesArray, true); // skipValidation=true
+      await fileTransferManager.selectFiles(Array.from(files), true);
+      syncRoomFiles();
     }
+
+    e.target.value = '';
   };
 
   const handleAddFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -41,37 +56,19 @@ export function CreateRoom() {
     const filesArray = Array.from(files);
 
     if (isQueueMode || fileQueue.length > 0) {
-      // 已有队列，继续添加
       await fileTransferManager.appendFiles(filesArray);
+      syncRoomFiles();
     } else if (selectedFile) {
-      // 已有单文件，转换为队列模式 - Room模式跳过验证
       await fileTransferManager.selectFiles([selectedFile, ...filesArray], true);
       setSelectedFile(null);
+      syncRoomFiles();
+    } else if (filesArray.length === 1) {
+      setSelectedFile(filesArray[0]);
     } else {
-      // 没有文件，新建队列
-      if (filesArray.length === 1) {
-        setSelectedFile(filesArray[0]);
-      } else {
-        // Room模式跳过验证
-        await fileTransferManager.selectFiles(filesArray, true);
-      }
+      await fileTransferManager.selectFiles(filesArray, true);
+      syncRoomFiles();
     }
 
-    // 如果已经在房间中，通知房间成员文件列表已更新
-    if (currentRoom) {
-      // 获取当前的文件队列并转换为元数据列表（包含索引）
-      const currentQueue = fileTransferManager.getFileQueue();
-      if (currentQueue && currentQueue.length > 0) {
-        const updatedFileList = currentQueue.map(item => ({
-          ...item.metadata,
-          index: item.index, // 保留文件在队列中的索引
-        }));
-        console.log('[CreateRoom] Notifying room members of file list update:', updatedFileList.length, 'files');
-        updateRoomFiles(updatedFileList);
-      }
-    }
-
-    // 清空input
     e.target.value = '';
   };
 
@@ -87,58 +84,46 @@ export function CreateRoom() {
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
+
     const files = e.dataTransfer.files;
     if (!files || files.length === 0) return;
 
-    // 先清空之前的选择
     fileTransferManager.fullReset();
     setSelectedFile(null);
 
     const filesArray = Array.from(files);
     if (filesArray.length === 1) {
       setSelectedFile(filesArray[0]);
-    } else {
-      // Room模式跳过验证，避免大文件阻塞
-      await fileTransferManager.selectFiles(filesArray, true);
+      return;
     }
+
+    await fileTransferManager.selectFiles(filesArray, true);
+    syncRoomFiles();
   };
 
   const handleRemoveFile = (index: number) => {
-    fileTransferManager.removeFileFromQueue(index);
-
-    // 如果已经在房间中，通知房间成员文件列表已更新
-    if (currentRoom) {
-      const currentQueue = fileTransferManager.getFileQueue();
-      const updatedFileList = currentQueue.map(item => ({
-        ...item.metadata,
-        index: item.index, // 保留文件在队列中的索引
-      }));
-      console.log('[CreateRoom] Notifying room members after file removal:', updatedFileList.length, 'files');
-      updateRoomFiles(updatedFileList);
+    if (!isQueueMode && selectedFile) {
+      fileTransferManager.fullReset();
+      setSelectedFile(null);
+      return;
     }
+
+    fileTransferManager.removeFileFromQueue(index);
+    syncRoomFiles();
   };
 
   const handleClearAll = () => {
     fileTransferManager.clearFileQueue();
     setSelectedFile(null);
+    syncRoomFiles();
   };
 
   const handleCreateRoomClick = () => {
-    // 验证是否已选择文件
-    if (isQueueMode) {
-      const firstFile = fileQueue.find(item => item.selected)?.file;
-      if (!firstFile) {
-        alert('请先选择文件');
-        return;
-      }
-    } else {
-      if (!selectedFile) {
-        alert('请先选择文件');
-        return;
-      }
+    if (displayQueue.length === 0) {
+      alert('请先选择文件');
+      return;
     }
 
-    // 显示密码对话框
     setShowPasswordDialog(true);
   };
 
@@ -146,142 +131,135 @@ export function CreateRoom() {
     setShowPasswordDialog(false);
 
     if (isQueueMode) {
-      // 多文件模式：使用第一个文件创建房间（房间创建后会传输整个队列）
-      const firstFile = fileQueue.find(item => item.selected)?.file;
+      const firstFile = fileQueue.find((item) => item.selected)?.file;
       if (firstFile) {
-        await createRoom(firstFile, password || undefined);
+        const room = await createRoom(firstFile, password || undefined);
+        if (room) {
+          savePickupSharePassword(room.id, password);
+        }
       }
-    } else {
-      // 单文件模式
-      if (selectedFile) {
-        await createRoom(selectedFile, password || undefined);
+      return;
+    }
+
+    if (selectedFile) {
+      const room = await createRoom(selectedFile, password || undefined);
+      if (room) {
+        savePickupSharePassword(room.id, password);
       }
     }
   };
 
-  const handlePasswordCancel = () => {
-    setShowPasswordDialog(false);
-  };
-
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
-    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
-    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
-  };
+  const displayQueue: FileQueueItem[] =
+    isQueueMode && fileQueue.length > 0
+      ? fileQueue
+      : selectedFile
+        ? [
+            {
+              file: selectedFile,
+              index: 0,
+              metadata: {
+                name: selectedFile.name,
+                size: selectedFile.size,
+                type: selectedFile.type,
+              },
+              status: 'pending',
+              progress: 0,
+              selected: true,
+            },
+          ]
+        : [];
 
   return (
-    <div className="create-room">
-      {/* 文件选择区域 - 仅在没有文件时显示 */}
-      {!selectedFile && !isQueueMode && (
-        <div
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-          className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all mb-4 ${
-            dragOver
-              ? 'border-blue-400 bg-blue-50'
-              : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'
-          }`}
-        >
-          <p className="text-lg font-medium text-gray-700 mb-1">选择文件</p>
-          <p className="text-sm text-gray-500">点击或拖拽文件到此处</p>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            onChange={handleFileSelect}
-            className="hidden"
-            id="room-file-input"
-          />
-        </div>
-      )}
-
-      {/* 单文件信息 */}
-      {!isQueueMode && selectedFile && (
-        <div className="bg-gray-50 border border-gray-200 p-4 mb-4 rounded-lg">
-          <p className="font-medium text-gray-900 mb-1">{selectedFile.name}</p>
-          <p className="text-sm text-gray-600">{formatFileSize(selectedFile.size)}</p>
-        </div>
-      )}
-
-      {/* 多文件队列 */}
-      {isQueueMode && fileQueue.length > 0 && (
-        <div className="mb-4">
-          <FileQueue queue={fileQueue} isSender={true} onRemove={handleRemoveFile} />
-        </div>
-      )}
-
-      {/* 文件操作按钮 */}
-      {(selectedFile || isQueueMode) && (
-        <div className="flex gap-2 mb-4">
-          {/* 更换文件按钮 */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              fileInputRef.current?.click();
-            }}
-            className="flex-1 py-2 px-4 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-all border border-gray-300"
+    <div className="create-room space-y-4">
+      {displayQueue.length === 0 && (
+        <ExperienceCard className="p-0">
+          <div
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={`cursor-pointer rounded-[14px] border-2 border-dashed px-6 py-14 text-center transition-all ${
+              dragOver
+                ? 'border-[#1a6dff] bg-[#e8f0ff]'
+                : 'border-[#e8ecf2] bg-[#f8fafd] hover:border-[#c9d9ff] hover:bg-[#f4f8ff]'
+            }`}
           >
-            更换文件
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            onChange={handleFileSelect}
-            className="hidden"
-            id="room-file-input"
-          />
-
-          {/* 继续添加按钮 */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              document.getElementById('room-add-files-input')?.click();
-            }}
-            className="flex-1 py-2 px-4 bg-blue-500 text-white font-medium rounded-lg hover:bg-blue-600 transition-all"
-          >
-            添加文件
-          </button>
-          <input
-            type="file"
-            multiple
-            onChange={handleAddFiles}
-            className="hidden"
-            id="room-add-files-input"
-          />
-
-          {/* 清空按钮 */}
-          <button
-            onClick={handleClearAll}
-            className="flex-1 py-2 px-4 bg-red-500 text-white font-medium rounded-lg hover:bg-red-600 transition-all"
-          >
-            清空
-          </button>
-        </div>
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-[14px] bg-[#e8f0ff] text-[#1a6dff]">
+              <TransferInboxIcon className="h-6 w-6" />
+            </div>
+            <div className="text-[15px] font-semibold text-[#1a1f36]">选择文件</div>
+            <div className="mt-2 text-[12px] text-[#8e95b2]">点击或拖拽文件到此处</div>
+          </div>
+        </ExperienceCard>
       )}
+
+      {displayQueue.length > 0 && (
+        <ExperienceCard className="p-5">
+          <FileQueue queue={displayQueue} isSender={true} onRemove={handleRemoveFile} />
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                fileInputRef.current?.click();
+              }}
+              className="flex-1 rounded-full border border-[#bfd6ff] bg-white px-4 py-3 text-[13px] font-semibold text-[#4f5d87] transition hover:border-[#1a6dff] hover:text-[#1a6dff]"
+            >
+              更换文件
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                addFilesInputRef.current?.click();
+              }}
+              className="flex-1 rounded-full bg-[#1a6dff] px-4 py-3 text-[13px] font-semibold text-white transition hover:bg-[#0a4fc9]"
+            >
+              添加文件
+            </button>
+            <button
+              onClick={handleClearAll}
+              className="flex-1 rounded-full bg-[#e11d48] px-4 py-3 text-[13px] font-semibold text-white transition hover:bg-[#be123c]"
+            >
+              清空
+            </button>
+          </div>
+        </ExperienceCard>
+      )}
+
+      <input
+        ref={fileInputRef}
+        id="room-file-input"
+        type="file"
+        multiple
+        onChange={handleFileSelect}
+        className="hidden"
+      />
+      <input
+        ref={addFilesInputRef}
+        id="room-add-files-input"
+        type="file"
+        multiple
+        onChange={handleAddFiles}
+        className="hidden"
+      />
 
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
+        <div className="rounded-[22px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {error}
         </div>
       )}
 
       <button
-        className="w-full py-3 bg-blue-500 text-white font-medium rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+        className="w-full rounded-full bg-slate-950 px-6 py-3 text-sm font-semibold text-white transition-all hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
         onClick={handleCreateRoomClick}
-        disabled={(!selectedFile && !isQueueMode) || isCreating}
+        disabled={displayQueue.length === 0 || isCreating}
       >
         {isCreating ? '生成中...' : '生成取件码'}
       </button>
 
-      {/* 密码对话框 */}
       {showPasswordDialog && (
         <RoomPasswordDialog
           onConfirm={handlePasswordConfirm}
-          onCancel={handlePasswordCancel}
+          onCancel={() => setShowPasswordDialog(false)}
         />
       )}
     </div>

@@ -182,6 +182,21 @@ export class RoomManager {
 
     const isNewRoom = !this.currentRoom;
 
+    if (room.status === 'dissolved') {
+      const initiatedByHost = room.hostId !== this.myDeviceId;
+
+      this.currentRoom = null;
+      eventBus.emit('room:dissolved', {
+        room,
+        message: initiatedByHost
+          ? '房主已取消发送，取件码房间已关闭。'
+          : '取件码房间已关闭。',
+        initiatedByHost,
+      });
+      eventBus.emit('room:left', undefined);
+      return;
+    }
+
     this.currentRoom = room;
 
     if (isNewRoom) {
@@ -286,6 +301,23 @@ export class RoomManager {
    */
   getCurrentRoom(): Room | null {
     return this.currentRoom;
+  }
+
+  reconnectPeerConnection(): void {
+    if (!this.currentRoom) {
+      throw new Error('当前没有房间');
+    }
+
+    if (!this.myDeviceId) {
+      throw new Error('设备尚未初始化');
+    }
+
+    if (this.currentRoom.hostId === this.myDeviceId) {
+      console.log('[RoomManager] Host peer refreshed, waiting for members to reconnect');
+      return;
+    }
+
+    this.establishHostConnection(this.currentRoom.hostId);
   }
 
   /**

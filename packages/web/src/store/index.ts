@@ -4,6 +4,13 @@
 import { create } from 'zustand';
 import type { Device, FileMetadata, TransferProgress, Room, RoomMember, FileQueueItem } from '@meshkit/core';
 
+export type P2PSessionState =
+  | 'idle'
+  | 'sending'
+  | 'waiting_receiver_complete'
+  | 'receiving'
+  | 'received_waiting_complete';
+
 interface AppState {
   // 连接状态
   isConnected: boolean; // 信令服务器连接状态
@@ -55,6 +62,8 @@ interface AppState {
   // 当前模式：点对点 or 房间模式
   transferMode: 'p2p' | 'room';
   setTransferMode: (mode: 'p2p' | 'room') => void;
+  p2pSessionState: P2PSessionState;
+  setP2PSessionState: (state: P2PSessionState) => void;
 
   // 旧的mode字段（发送/接收）
   mode: 'send' | 'receive';
@@ -94,6 +103,7 @@ export const useAppStore = create<AppState>((set) => ({
   downloadFilename: '',
   isStreamingDownload: false,
   transferMode: 'p2p',
+  p2pSessionState: 'idle',
   mode: 'send',
   currentRoom: null,
   broadcastProgress: {},
@@ -133,6 +143,8 @@ export const useAppStore = create<AppState>((set) => ({
     set({ isStreamingDownload: streaming, downloadFilename: filename }),
 
   setTransferMode: (mode) => set({ transferMode: mode }),
+
+  setP2PSessionState: (p2pSessionState) => set({ p2pSessionState }),
 
   setMode: (mode) => set({ mode }),
 
@@ -181,6 +193,7 @@ export const useAppStore = create<AppState>((set) => ({
       isStreamingDownload: false,
       selectedDeviceId: null,
       p2pConnected: false,
+      p2pSessionState: 'idle',
     }),
 
   resetRoom: () =>
@@ -198,5 +211,6 @@ export const useAppStore = create<AppState>((set) => ({
       downloadFilename: '',
       isStreamingDownload: false,
       p2pConnected: false,
+      p2pSessionState: 'idle',
     }),
 }));

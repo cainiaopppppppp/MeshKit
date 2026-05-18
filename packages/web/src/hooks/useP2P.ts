@@ -117,7 +117,7 @@ function showReceiveSuccessNotification(filename: string): void {
     // 已授权，直接显示通知
     new Notification('✅ 文件接收完成！', {
       body: `${filename} 已接收完成，文件已开始下载`,
-      icon: '/favicon.ico',
+      icon: '/favicon.png',
       tag: 'file-receive-success',
     });
   } else if ('Notification' in window && Notification.permission !== 'denied') {
@@ -126,7 +126,7 @@ function showReceiveSuccessNotification(filename: string): void {
       if (permission === 'granted') {
         new Notification('✅ 文件接收完成！', {
           body: `${filename} 已接收完成，文件已开始下载`,
-          icon: '/favicon.ico',
+          icon: '/favicon.png',
           tag: 'file-receive-success',
         });
       }
@@ -157,8 +157,11 @@ export function useP2P() {
     setFileQueue,
     setQueueMode,
     setQueueDirection,
+    setP2PSessionState,
     reset,
     isTransferring,
+    transferMode,
+    mode,
   } = useAppStore();
 
   useEffect(() => {
@@ -195,7 +198,7 @@ export function useP2P() {
         );
 
         // 如果是新生成的设备信息，保存到 localStorage
-        if (!persisted.deviceId || !persisted.deviceName) {
+        if (persisted.deviceId !== deviceId || persisted.deviceName !== deviceName) {
           persistDeviceInfo(deviceId, deviceName);
         }
 
@@ -228,7 +231,7 @@ export function useP2P() {
     return () => {
       unsubscribe();
     };
-  }, [setConnected, setMyDevice, setDevices, setTransferring, setTransferProgress, setDownload, reset]);
+  }, [setConnected, setMyDevice, setDevices, setTransferring, setTransferProgress, setDownload, setStreamingDownload, setFileQueue, setQueueMode, setQueueDirection, setP2PSessionState, reset, transferMode, mode]);
 
   // 防止传输过程中刷新页面
   useEffect(() => {
@@ -292,6 +295,9 @@ export function useP2P() {
       setStreamingDownload(false, '');
       // 立即显示"准备中"状态（即时反馈）
       setTransferring(true, direction);
+      if (transferMode === 'p2p') {
+        setP2PSessionState(direction === 'receive' ? 'receiving' : 'sending');
+      }
       console.log('[useP2P] Transfer preparing:', direction);
     };
 
@@ -300,6 +306,9 @@ export function useP2P() {
       setDownload(false, '');
       setStreamingDownload(false, '');
       setTransferring(true, direction);
+      if (transferMode === 'p2p') {
+        setP2PSessionState(direction === 'receive' ? 'receiving' : 'sending');
+      }
       console.log('[useP2P] Transfer started:', direction);
     };
 
@@ -352,10 +361,14 @@ export function useP2P() {
       }
 
       setTransferring(false);
+      if (transferMode === 'p2p') {
+        setP2PSessionState(direction === 'receive' ? 'received_waiting_complete' : 'waiting_receiver_complete');
+      }
     };
 
     const onTransferError = () => {
       setTransferring(false);
+      setP2PSessionState('idle');
       reset();
     };
 
@@ -431,7 +444,7 @@ export function useP2P() {
       if ('Notification' in window && Notification.permission === 'granted') {
         new Notification('✅ 多文件传输完成！', {
           body: `成功: ${successCount}/${totalFiles} 个文件`,
-          icon: '/favicon.ico',
+          icon: '/favicon.png',
           tag: 'queue-complete',
         });
       }
@@ -443,7 +456,27 @@ export function useP2P() {
       }
 
       setTransferring(false);
+      if (transferMode === 'p2p') {
+        setP2PSessionState(mode === 'receive' ? 'received_waiting_complete' : 'waiting_receiver_complete');
+      }
       // 队列模式保持开启，显示最终结果
+    };
+
+    const onTransferRejected = () => {
+      setP2PSessionState('idle');
+    };
+
+    const onTransferCancelled = () => {
+      setTransferring(false);
+      setP2PSessionState('idle');
+    };
+
+    const onReceiverCompleted = ({ direction }: { direction: 'send' | 'receive' }) => {
+      setP2PSessionState('idle');
+
+      if (direction === 'send') {
+        window.alert('接收方已标记为已完成，本次点对点传输可以结束了。');
+      }
     };
 
     // 订阅事件
@@ -462,6 +495,9 @@ export function useP2P() {
     eventBus.on('transfer:file-item-completed', onFileItemCompleted);
     eventBus.on('transfer:file-item-failed', onFileItemFailed);
     eventBus.on('transfer:queue-completed', onQueueCompleted);
+    eventBus.on('transfer:rejected', onTransferRejected);
+    eventBus.on('transfer:cancelled', onTransferCancelled);
+    (eventBus as any).on('transfer:receiver-completed', onReceiverCompleted);
 
     // 返回清理函数
     return () => {
@@ -480,6 +516,9 @@ export function useP2P() {
       eventBus.off('transfer:file-item-completed', onFileItemCompleted);
       eventBus.off('transfer:file-item-failed', onFileItemFailed);
       eventBus.off('transfer:queue-completed', onQueueCompleted);
+      eventBus.off('transfer:rejected', onTransferRejected);
+      eventBus.off('transfer:cancelled', onTransferCancelled);
+      (eventBus as any).off('transfer:receiver-completed', onReceiverCompleted);
     };
   }
 }

@@ -1,14 +1,11 @@
 /**
  * @p2p-transfer/core
  *
- * P2P文件传输核心逻辑包
- * 跨平台共享：Web、Desktop（Electron）、Mobile（React Native）
+ * Shared core exports for Web, Desktop, and Mobile.
  */
 
-// 类型定义
 export * from './types';
 
-// 工具类
 export { eventBus } from './utils/EventBus';
 export { default as EventBus } from './utils/EventBus';
 export { config } from './utils/Config';
@@ -17,7 +14,6 @@ export { fileEncryption, FileEncryptionHelper, ENCRYPTION_METHODS } from './util
 export type { EncryptionMethod } from './utils/FileEncryption';
 export * from './utils';
 
-// 管理器
 export { P2PManager, p2pManager } from './managers/P2PManager';
 export { DeviceManager, deviceManager } from './managers/DeviceManager';
 export { FileTransferManager, fileTransferManager } from './managers/FileTransferManager';
@@ -25,37 +21,46 @@ export { RoomManager, roomManager } from './managers/RoomManager';
 export { DeviceBlockManager, deviceBlockManager } from './managers/DeviceBlockManager';
 export type { BlockedDevice } from './managers/DeviceBlockManager';
 
-// 服务
 export { SignalingClient, signalingClient } from './services/SignalingClient';
 
-// 导入用于内部函数使用
 import { DeviceManager, deviceManager } from './managers/DeviceManager';
 import { p2pManager } from './managers/P2PManager';
 import { fileTransferManager } from './managers/FileTransferManager';
 import { roomManager } from './managers/RoomManager';
 import { signalingClient } from './services/SignalingClient';
 
-/**
- * 初始化核心模块
- *
- * @param deviceId - 设备ID（可选，不提供会自动生成）
- * @param deviceName - 设备名称（可选，不提供会自动生成）
- * @returns 设备信息
- */
+function isPeerIdUnavailableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return message.includes('is taken') || message.includes('unavailable-id');
+}
+
 export async function initCore(deviceId?: string, deviceName?: string) {
   console.log('[@p2p-transfer/core] Initializing...');
 
-  // 生成或使用提供的设备ID和名称
-  const finalDeviceId = deviceId || DeviceManager.generateDeviceId();
-  const finalDeviceName = deviceName || DeviceManager.generateDeviceName(finalDeviceId);
+  let finalDeviceId = deviceId || DeviceManager.generateDeviceId();
+  let finalDeviceName = deviceName || DeviceManager.generateDeviceName(finalDeviceId);
 
-  // 初始化设备管理器
+  try {
+    await p2pManager.init(finalDeviceId);
+  } catch (error) {
+    if (!isPeerIdUnavailableError(error)) {
+      throw error;
+    }
+
+    const fallbackDeviceId = DeviceManager.generateDeviceId();
+    const fallbackDeviceName = deviceName || DeviceManager.generateDeviceName(fallbackDeviceId);
+
+    console.warn('[@p2p-transfer/core] Device ID unavailable, switching to a new ID:', {
+      previousDeviceId: finalDeviceId,
+      nextDeviceId: fallbackDeviceId,
+    });
+
+    await p2pManager.init(fallbackDeviceId);
+    finalDeviceId = fallbackDeviceId;
+    finalDeviceName = fallbackDeviceName;
+  }
+
   deviceManager.init(finalDeviceId, finalDeviceName);
-
-  // 初始化P2P管理器
-  await p2pManager.init(finalDeviceId);
-
-  // 初始化房间管理器
   roomManager.init(finalDeviceId, finalDeviceName);
 
   console.log('[@p2p-transfer/core] Initialized', {
@@ -69,11 +74,6 @@ export async function initCore(deviceId?: string, deviceName?: string) {
   };
 }
 
-/**
- * 连接到信令服务器
- *
- * @param url - 信令服务器URL
- */
 export function connectSignaling(url: string) {
   const device = deviceManager.getMyDevice();
   if (!device) {
@@ -83,22 +83,17 @@ export function connectSignaling(url: string) {
   signalingClient.connect(url, device.id, device.name);
 }
 
-/**
- * 更新设备名称
- *
- * @param newName - 新的设备名称
- */
+export async function refreshP2PPeer() {
+  await p2pManager.refreshPeer();
+}
+
 export function updateDeviceName(newName: string) {
   if (!newName || newName.trim() === '') {
     throw new Error('Device name cannot be empty');
   }
 
   const trimmedName = newName.trim();
-
-  // 更新设备管理器中的设备名
   deviceManager.updateMyDeviceName(trimmedName);
-
-  // 通过信令服务器通知其他设备
   signalingClient.updateDeviceName(trimmedName);
 
   console.log('[@p2p-transfer/core] Device name updated:', trimmedName);
@@ -106,9 +101,6 @@ export function updateDeviceName(newName: string) {
   return trimmedName;
 }
 
-/**
- * 清理资源
- */
 export function cleanup() {
   console.log('[@p2p-transfer/core] Cleaning up...');
 
