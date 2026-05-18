@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import { DesktopComputerIcon, MobilePhoneIcon } from '../components/FileTransferIcons';
+import { ShareQrCode } from '../components/ShareQrCode';
 import {
   autoConfigureSignaling,
   getShareableWebUrlForDraft,
@@ -9,8 +11,6 @@ import {
   saveSignalingConfigDraft,
   type SignalingConfigDraft,
 } from '../utils/signalingConfig';
-import { DesktopComputerIcon, MobilePhoneIcon } from '../components/FileTransferIcons';
-import { ShareQrCode } from '../components/ShareQrCode';
 
 type NoticeTone = 'success' | 'warning' | 'info';
 
@@ -22,11 +22,11 @@ interface NoticeState {
 function getNoticeClasses(tone: NoticeTone): string {
   switch (tone) {
     case 'success':
-      return 'border-green-200 bg-green-50 text-green-800';
+      return 'border-[rgba(16,185,129,0.16)] bg-[rgba(16,185,129,0.08)] text-[#047857]';
     case 'warning':
-      return 'border-amber-200 bg-amber-50 text-amber-900';
+      return 'border-[rgba(245,158,11,0.18)] bg-[rgba(245,158,11,0.08)] text-[#b45309]';
     default:
-      return 'border-sky-200 bg-sky-50 text-sky-800';
+      return 'border-[rgba(26,109,255,0.14)] bg-[#e8f0ff] text-[#1a6dff]';
   }
 }
 
@@ -119,10 +119,12 @@ export function SettingsPage() {
     const peerPort = form.peerPort.trim() || '8000';
 
     return {
+      host,
       wsUrl: `ws://${host}:${wsPort}/ws`,
       peerUrl: `http://${host}:${peerPort}/peerjs`,
+      lanUrl: shareUrlPreview || `http://${host}:3000/`,
     };
-  }, [form.host, form.wsPort, form.peerPort]);
+  }, [form.host, form.wsPort, form.peerPort, shareUrlPreview]);
 
   const updateField = (field: keyof SignalingConfigDraft, value: string) => {
     setForm((current) => ({
@@ -150,7 +152,7 @@ export function SettingsPage() {
     setInviteLinkInput('');
     setNotice({
       tone: 'info',
-      message: '已恢复默认配置。网页端会优先使用当前访问地址，或你分享出去的邀请链接参数。',
+      message: '已恢复默认配置。网页端会优先使用当前访问地址，或者你导入的邀请链接参数。',
     });
   };
 
@@ -180,14 +182,14 @@ export function SettingsPage() {
       } else {
         setNotice({
           tone: 'warning',
-          message: `暂时没探测到在线服务，先为你填入了最可能的地址 ${result.config.host}。确认对方设备已经开启共享后，再保存即可。`,
+          message: `暂时没探测到已在线服务，先为你填入了最可能的地址 ${result.config.host}。确认对方设备已开启共享后，再保存即可。`,
         });
       }
     } catch (error) {
       console.error('[WebSettingsPage] Auto configure failed:', error);
       setNotice({
         tone: 'warning',
-        message: '自动配置失败，你仍然可以手动输入地址，或直接打开别人发来的邀请链接。',
+        message: '自动配置失败，你仍然可以手动输入地址，或者直接打开别人发来的邀请链接。',
       });
     } finally {
       setIsAutoConfiguring(false);
@@ -205,12 +207,12 @@ export function SettingsPage() {
       setNotice({
         tone: copied ? 'success' : 'info',
         message: copied
-          ? `邀请链接已复制。对方打开后会自动写入 ${form.host.trim() || 'localhost'}。`
+          ? `邀请链接已复制，对方打开后会自动写入 ${form.host.trim() || 'localhost'}。`
           : '邀请链接已生成，但浏览器没给剪贴板权限。你可以手动复制下方的当前共享地址。',
       });
 
       if (!copied) {
-        window.prompt('请手动复制这个邀请链接：', result.url);
+        window.prompt('请手动复制这条邀请链接：', result.url);
       }
     } catch (error) {
       console.error('[WebSettingsPage] Failed to build invite link:', error);
@@ -248,219 +250,220 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.14),_transparent_36%),linear-gradient(180deg,_#f7fbff_0%,_#eef5ff_46%,_#f8fafc_100%)] px-4 py-8">
-      <div className="mx-auto max-w-6xl space-y-6">
-        <section className="rounded-[32px] border border-white/70 bg-white/85 p-8 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur">
-          <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
-            <div className="max-w-3xl">
-              <p className="mb-2 text-sm font-semibold uppercase tracking-[0.28em] text-sky-600">
-                MeshKit Share Hub
-              </p>
-              <h1 className="text-3xl font-bold tracking-tight text-slate-950">共享中心</h1>
-              <p className="mt-3 text-sm leading-6 text-slate-600">
-                网页版本本身就是分享页。你只需要打开正确的网页地址，然后把邀请链接发出去，或者直接让对方扫码进入。
-              </p>
-            </div>
+    <div className="mx-auto max-w-[480px] px-5 py-6 pb-14 sm:px-4">
+      <section className="mb-7">
+        <p className="mb-1.5 font-['DM_Sans',_'Noto_Sans_SC',sans-serif] text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1a6dff]">
+          MeshKit Share Hub
+        </p>
+        <h1 className="text-[26px] font-bold tracking-[-0.03em] text-[#1a1f36]">共享中心</h1>
+        <p className="mt-2 text-sm leading-7 text-[#5e6687]">
+          管理邀请链接、二维码和连接配置。网页版本本身就是分享页，只要地址正确，对方打开后就能自动写入连接参数。
+        </p>
+      </section>
 
-            <div className="flex flex-wrap gap-3">
-              <button
-                onClick={handleCopyInviteLink}
-                disabled={isCopyingInvite}
-                className="rounded-full bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isCopyingInvite ? '正在复制...' : '复制邀请链接'}
-              </button>
-              <button
-                onClick={handleAutoConfigure}
-                disabled={isAutoConfiguring}
-                className="rounded-full border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isAutoConfiguring ? '正在自动配置...' : '一键自动配置'}
-              </button>
+      {notice ? (
+        <div className={`mb-4 rounded-[10px] border px-4 py-3 text-[13px] ${getNoticeClasses(notice.tone)}`}>
+          {notice.message}
+        </div>
+      ) : null}
+
+      <section className="mb-4 overflow-hidden rounded-[14px] border border-[#e8ecf2] bg-white shadow-[0_1px_3px_rgba(26,31,54,0.04)]">
+        <div className="flex flex-col gap-3 border-b border-[#f0f3f8] px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-[14px] font-semibold text-[#1a1f36]">当前共享地址</h2>
+            <p className="mt-1 text-[12px] text-[#8e95b2]">推荐直接发给手机或浏览器，打开后自动写入连接参数。</p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={handleCopyInviteLink}
+              disabled={isCopyingInvite}
+              className="rounded-[8px] border border-[#e8ecf2] bg-white px-3.5 py-2 text-[12px] font-medium text-[#5e6687] transition hover:border-[#1a6dff] hover:text-[#1a6dff] disabled:opacity-60"
+            >
+              {isCopyingInvite ? '复制中...' : '复制链接'}
+            </button>
+          </div>
+        </div>
+
+        <div className="px-5 py-4">
+          <div className="mb-3 rounded-[8px] border border-[#f0f3f8] bg-[#f8fafd] px-3.5 py-3 font-mono text-[11px] leading-5 text-[#5e6687] break-all">
+            {shareUrlPreview || '正在生成邀请链接...'}
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <div className="text-[12px] font-medium text-[#5e6687]">SIGNAL HOST</div>
+              <div className="mt-1 text-[14px] font-semibold text-[#1a1f36]">{preview.host}</div>
+              <div className="mt-1 text-[11px] text-[#8e95b2] break-all">{preview.wsUrl}</div>
+            </div>
+            <div>
+              <div className="text-[12px] font-medium text-[#5e6687]">LAN ADDRESS</div>
+              <div className="mt-1 text-[14px] font-semibold text-[#1a1f36]">{preview.host}</div>
+              <div className="mt-1 text-[11px] text-[#8e95b2] break-all">{preview.lanUrl}</div>
             </div>
           </div>
-        </section>
+        </div>
+      </section>
 
-        {notice && (
-          <div className={`rounded-2xl border px-5 py-4 text-sm ${getNoticeClasses(notice.tone)}`}>
-            {notice.message}
+      <div className="mb-4 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-[14px] border border-[#e8ecf2] bg-white p-5 text-center shadow-[0_1px_3px_rgba(26,31,54,0.04)]">
+          <h2 className="text-[13px] font-semibold text-[#1a1f36]">扫码加入</h2>
+          <p className="mt-1 text-[12px] text-[#8e95b2]">手机扫描二维码后自动写入连接地址。</p>
+          <div className="mt-4">
+            <ShareQrCode text={shareUrlPreview} compact />
           </div>
-        )}
+        </div>
 
-        <section className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
-          <article className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-bold text-slate-950">当前共享地址</h2>
-                <p className="mt-1 text-sm text-slate-600">
-                  这是最适合分享给手机和其他浏览器的地址。打开后会自动写入当前连接参数。
-                </p>
-              </div>
-              <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
-                Web Share
-              </span>
+        <div className="rounded-[14px] border border-[#e8ecf2] bg-white p-5 shadow-[0_1px_3px_rgba(26,31,54,0.04)]">
+          <h2 className="text-[13px] font-semibold text-[#1a1f36]">共享状态</h2>
+          <p className="mt-1 text-[12px] text-[#8e95b2]">网页端本身没有桌面端的内置服务，但会根据当前地址生成可分享入口。</p>
+          <div className="mt-4 space-y-2">
+            <div className="flex items-center justify-between rounded-[8px] border border-[#f0f3f8] bg-[#f8fafd] px-3.5 py-3 text-[12px]">
+              <span className="font-medium text-[#1a1f36]">分享地址预览</span>
+              <span className="rounded-full bg-[#e8f0ff] px-2.5 py-0.5 text-[11px] font-medium text-[#1a6dff]">已生成</span>
             </div>
-
-            <div className="mt-5 space-y-4">
-              <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Share URL</div>
-                <div className="mt-2 break-all rounded-2xl bg-white px-4 py-4 font-mono text-xs text-slate-800">
-                  {shareUrlPreview || '正在生成邀请链接...'}
-                </div>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="rounded-[24px] border border-emerald-200 bg-emerald-50 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">WebSocket</div>
-                  <div className="mt-2 font-mono text-xs text-emerald-900">{preview.wsUrl}</div>
-                </div>
-
-                <div className="rounded-[24px] border border-sky-200 bg-sky-50 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">PeerJS</div>
-                  <div className="mt-2 font-mono text-xs text-sky-900">{preview.peerUrl}</div>
-                </div>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-[1fr_auto_1fr] md:items-center">
-                <div className="flex items-center gap-4 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-4">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-900 text-white">
-                    <DesktopComputerIcon className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <div className="font-semibold text-slate-950">分享端</div>
-                    <div className="text-sm text-slate-600">打开当前网页，再复制邀请链接</div>
-                  </div>
-                </div>
-
-                <div className="hidden justify-center text-slate-300 md:flex">
-                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 12h14m-4-4 4 4-4 4" />
-                  </svg>
-                </div>
-
-                <div className="flex items-center gap-4 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-4">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-sky-100 text-sky-700">
-                    <MobilePhoneIcon className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <div className="font-semibold text-slate-950">加入端</div>
-                    <div className="text-sm text-slate-600">打开链接或扫码后，自动完成配置</div>
-                  </div>
-                </div>
-              </div>
+            <div className="rounded-[8px] border border-[#f0f3f8] bg-[#f8fafd] px-3.5 py-3 text-[12px]">
+              <div className="font-medium text-[#1a1f36]">连接预览</div>
+              <div className="mt-1 text-[11px] leading-5 text-[#8e95b2] break-all">{preview.wsUrl}</div>
             </div>
-          </article>
+          </div>
+        </div>
+      </div>
 
-          <ShareQrCode
-            text={shareUrlPreview}
-            title="扫码加入"
-            caption="手机直接扫这个二维码，就会打开当前网页并自动写入相同的连接地址。"
+      <div className="mb-4 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-[14px] border border-[#e8ecf2] bg-white p-5 shadow-[0_1px_3px_rgba(26,31,54,0.04)]">
+          <h2 className="text-[13px] font-semibold text-[#1a1f36]">附近共享</h2>
+          <p className="mt-1 text-[12px] text-[#8e95b2]">浏览器端没有局域网自动发现，最稳的方式仍然是发邀请链接或二维码。</p>
+          <div className="mt-4 rounded-[10px] border border-dashed border-[#e8ecf2] px-4 py-6 text-center">
+            <svg className="mx-auto h-7 w-7 text-[#8e95b2]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01" />
+            </svg>
+            <div className="mt-2 text-[12px] font-medium text-[#5e6687]">请直接分享邀请链接</div>
+            <div className="mt-1 text-[11px] text-[#8e95b2]">网页端不做自动发现，避免误判局域网地址。</div>
+          </div>
+        </div>
+
+        <div className="rounded-[14px] border border-[#e8ecf2] bg-white p-5 shadow-[0_1px_3px_rgba(26,31,54,0.04)]">
+          <h2 className="text-[13px] font-semibold text-[#1a1f36]">导入邀请链接</h2>
+          <p className="mt-1 text-[12px] text-[#8e95b2]">把邀请链接粘贴到这里，一键导入连接配置。</p>
+          <textarea
+            value={inviteLinkInput}
+            onChange={(event) => setInviteLinkInput(event.target.value)}
+            placeholder="http://192.168.x.x:3000/?meshkitHost=..."
+            rows={4}
+            className="mt-4 w-full rounded-[10px] border border-[#e8ecf2] bg-white px-4 py-3 text-[12px] text-[#1a1f36] placeholder:text-[#8e95b2] focus:border-[#1a6dff] focus:outline-none"
           />
-        </section>
+          <div className="mt-3 flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={handleImportInviteLink}
+              className="rounded-[8px] bg-[#1a6dff] px-4 py-2.5 text-[12px] font-medium text-white transition hover:bg-[#0a4fc9]"
+            >
+              导入邀请链接
+            </button>
+            <button
+              type="button"
+              onClick={handleAutoConfigure}
+              disabled={isAutoConfiguring}
+              className="rounded-[8px] border border-[#e8ecf2] bg-white px-4 py-2.5 text-[12px] font-medium text-[#5e6687] transition hover:border-[#1a6dff] hover:text-[#1a6dff] disabled:opacity-60"
+            >
+              {isAutoConfiguring ? '正在自动配置...' : '一键自动配置'}
+            </button>
+          </div>
+        </div>
+      </div>
 
-        <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-          <article className="rounded-[28px] border border-white/70 bg-white p-6 shadow-sm">
-            <div className="mb-5">
-              <h2 className="text-lg font-bold text-slate-950">导入邀请链接</h2>
-              <p className="mt-1 text-sm text-slate-600">
-                如果别人已经把邀请链接发给你，你也可以把它粘贴到这里，当前浏览器会自动写入对应的主机和端口。
-              </p>
-            </div>
+      <section className="rounded-[14px] border border-[#e8ecf2] bg-white p-5 shadow-[0_1px_3px_rgba(26,31,54,0.04)]">
+        <div className="mb-4">
+          <h2 className="text-[13px] font-semibold text-[#1a1f36]">高级连接配置</h2>
+          <p className="mt-1 text-[12px] text-[#8e95b2]">仅在你需要手动指定服务器时使用。普通情况下，直接发邀请链接就够了。</p>
+        </div>
 
-            <div className="space-y-3">
-              <textarea
-                value={inviteLinkInput}
-                onChange={(event) => setInviteLinkInput(event.target.value)}
-                placeholder="把邀请链接粘贴到这里，例如 http://192.168.x.x:3000/?meshkitHost=..."
-                rows={4}
-                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none"
-              />
-              <button
-                onClick={handleImportInviteLink}
-                className="rounded-full bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700"
-              >
-                导入邀请链接
-              </button>
-            </div>
-          </article>
-
-          <article className="rounded-[28px] border border-amber-200 bg-amber-50 p-6 shadow-sm">
-            <h2 className="text-lg font-bold text-amber-950">浏览器端说明</h2>
-            <div className="mt-4 space-y-3 text-sm leading-7 text-amber-900">
-              <p>网页端支持复制邀请链接、扫码加入和导入邀请链接。</p>
-              <p>网页端本身不能像桌面端那样做局域网自动发现，所以最稳的方式仍然是直接发链接或二维码。</p>
-              <p>如果你当前访问的是 `localhost`，分享前最好确认生成出来的邀请链接已经变成了局域网地址。</p>
-            </div>
-          </article>
-        </section>
-
-        <section className="rounded-[28px] border border-white/70 bg-white p-6 shadow-sm">
-          <div className="mb-5">
-            <h2 className="text-lg font-bold text-slate-950">高级连接配置</h2>
-            <p className="mt-1 text-sm text-slate-600">
-              只有在你需要手动指定服务器地址时才需要改这里。通常直接打开邀请链接就够了。
-            </p>
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1.5 block text-[12px] font-medium text-[#5e6687]">服务器地址</label>
+            <input
+              type="text"
+              value={form.host}
+              onChange={(event) => updateField('host', event.target.value)}
+              className="w-full rounded-[10px] border border-[#e8ecf2] bg-white px-4 py-3 text-sm text-[#1a1f36] placeholder:text-[#8e95b2] focus:border-[#1a6dff] focus:outline-none"
+            />
           </div>
 
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label className="mb-2 block text-sm font-semibold text-slate-700">服务器地址</label>
-              <input
-                type="text"
-                value={form.host}
-                onChange={(event) => updateField('host', event.target.value)}
-                placeholder="localhost 或 192.168.x.x"
-                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-slate-700">WebSocket 端口</label>
+              <label className="mb-1.5 block text-[12px] font-medium text-[#5e6687]">WebSocket 端口</label>
               <input
                 type="number"
                 value={form.wsPort}
                 onChange={(event) => updateField('wsPort', event.target.value)}
-                placeholder="7000"
-                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none"
+                className="w-full rounded-[10px] border border-[#e8ecf2] bg-white px-4 py-3 text-sm text-[#1a1f36] focus:border-[#1a6dff] focus:outline-none"
               />
             </div>
-
             <div>
-              <label className="mb-2 block text-sm font-semibold text-slate-700">PeerJS 端口</label>
+              <label className="mb-1.5 block text-[12px] font-medium text-[#5e6687]">PeerJS 端口</label>
               <input
                 type="number"
                 value={form.peerPort}
                 onChange={(event) => updateField('peerPort', event.target.value)}
-                placeholder="8000"
-                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none"
+                className="w-full rounded-[10px] border border-[#e8ecf2] bg-white px-4 py-3 text-sm text-[#1a1f36] focus:border-[#1a6dff] focus:outline-none"
               />
             </div>
           </div>
 
-          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-            <div className="mb-2 font-semibold text-slate-900">连接预览</div>
-            <div className="space-y-1 font-mono text-xs">
-              <div>WebSocket: {preview.wsUrl}</div>
-              <div>PeerJS: {preview.peerUrl}</div>
-            </div>
+          <div className="rounded-[8px] border border-[#f0f3f8] bg-[#f8fafd] px-3.5 py-3 font-mono text-[11px] leading-6 text-[#8e95b2]">
+            <div className="mb-1 font-sans text-[11px] font-semibold text-[#5e6687]">连接预览</div>
+            WebSocket: {preview.wsUrl}
+            <br />
+            PeerJS: {preview.peerUrl}
           </div>
 
-          <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+          <div className="flex gap-2">
             <button
+              type="button"
               onClick={handleSave}
-              className="flex-1 rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+              className="rounded-[8px] bg-[#1a6dff] px-4 py-2.5 text-[12px] font-medium text-white transition hover:bg-[#0a4fc9]"
             >
               保存配置
             </button>
             <button
+              type="button"
               onClick={handleReset}
-              className="flex-1 rounded-full border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              className="rounded-[8px] border border-[#e8ecf2] bg-white px-4 py-2.5 text-[12px] font-medium text-[#5e6687] transition hover:border-[#1a6dff] hover:text-[#1a6dff]"
             >
               重置为默认
             </button>
           </div>
-        </section>
-      </div>
+        </div>
+      </section>
+
+      <section className="mt-5 rounded-[14px] border border-[rgba(26,109,255,0.1)] bg-[linear-gradient(135deg,#e8f0ff,rgba(26,109,255,0.04))] p-4 shadow-[0_1px_3px_rgba(26,31,54,0.04)]">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex flex-1 items-center gap-3">
+            <span className="flex h-8 w-8 items-center justify-center rounded-[8px] bg-white text-[#1a6dff] shadow-[0_1px_3px_rgba(26,31,54,0.04)]">
+              <DesktopComputerIcon className="h-4 w-4" />
+            </span>
+            <div className="text-[12px] text-[#5e6687]">
+              <div className="font-semibold text-[#1a1f36]">分享端</div>
+              <div>打开当前网页，复制邀请链接或二维码。</div>
+            </div>
+          </div>
+          <div className="hidden text-[#8e95b2] sm:block">
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14m-4-4 4 4-4 4" />
+            </svg>
+          </div>
+          <div className="flex flex-1 items-center gap-3">
+            <span className="flex h-8 w-8 items-center justify-center rounded-[8px] bg-white text-[#1a6dff] shadow-[0_1px_3px_rgba(26,31,54,0.04)]">
+              <MobilePhoneIcon className="h-4 w-4" />
+            </span>
+            <div className="text-[12px] text-[#5e6687]">
+              <div className="font-semibold text-[#1a1f36]">加入端</div>
+              <div>打开链接后会自动写入主机和端口。</div>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

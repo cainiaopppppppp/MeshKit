@@ -7,7 +7,11 @@ interface ShareQrCodeProps {
   caption?: string;
 }
 
-export function ShareQrCode({ text, title = '扫码加入', caption }: ShareQrCodeProps) {
+export function ShareQrCode({
+  text,
+  title = '扫码加入',
+  caption,
+}: ShareQrCodeProps) {
   const [dataUrl, setDataUrl] = useState('');
 
   useEffect(() => {
@@ -59,7 +63,7 @@ export function ShareQrCode({ text, title = '扫码加入', caption }: ShareQrCo
           />
         ) : (
           <div className="max-w-xs text-center text-sm leading-6 text-slate-500">
-            当前还没有可分享的邀请链接。开启共享后，这里会自动生成二维码。
+            {'当前还没有可分享的链接，开启分享后，这里会自动生成二维码。'}
           </div>
         )}
       </div>

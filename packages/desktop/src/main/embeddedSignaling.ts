@@ -112,6 +112,7 @@ export async function startEmbeddedSignaling(
   const wsPort = options.wsPort || 7000;
   const peerPort = options.peerPort || 8000;
   const publicHost = getPreferredLocalHost();
+  const deviceStaleTime = 45_000;
 
   const devices = new Map<string, RegisteredDevice>();
   const rooms = new Map<string, RoomRecord>();
@@ -258,10 +259,49 @@ export async function startEmbeddedSignaling(
     console.log(`[embedded-signaling] WebSocket client connected from ${clientIp || 'unknown'}`);
 
     let deviceId: string | null = null;
+    let deviceName: string | null = null;
+
+    const upsertRegisteredDevice = (nextDeviceName?: string) => {
+      if (!deviceId) {
+        return false;
+      }
+
+      const resolvedDeviceName = typeof nextDeviceName === 'string' && nextDeviceName.trim()
+        ? nextDeviceName
+        : deviceName;
+
+      if (!resolvedDeviceName) {
+        return false;
+      }
+
+      const existingDevice = devices.get(deviceId);
+      const hasChanged = !existingDevice
+        || existingDevice.ws !== ws
+        || existingDevice.name !== resolvedDeviceName;
+
+      deviceName = resolvedDeviceName;
+      devices.set(deviceId, {
+        id: deviceId,
+        name: resolvedDeviceName,
+        ws,
+        timestamp: Date.now(),
+      });
+
+      return hasChanged;
+    };
 
     ws.on('message', (rawMessage: any) => {
       try {
         const data = JSON.parse(String(rawMessage));
+
+        if (deviceId && data.type !== 'register') {
+          const deviceRestored = upsertRegisteredDevice(
+            typeof data.deviceName === 'string' ? data.deviceName : undefined,
+          );
+          if (deviceRestored) {
+            broadcastDeviceList();
+          }
+        }
 
         switch (data.type) {
           case 'subscribe':
@@ -318,12 +358,8 @@ export async function startEmbeddedSignaling(
             }
 
             deviceId = data.deviceId;
-            devices.set(deviceId as string, {
-              id: deviceId as string,
-              name: data.deviceName,
-              ws,
-              timestamp: Date.now(),
-            });
+            deviceName = data.deviceName;
+            upsertRegisteredDevice(data.deviceName);
             broadcastDeviceList();
             break;
 
@@ -342,10 +378,10 @@ export async function startEmbeddedSignaling(
           }
 
           case 'heartbeat':
-            if (deviceId && devices.has(deviceId)) {
-              const currentDevice = devices.get(deviceId);
-              if (currentDevice) {
-                currentDevice.timestamp = Date.now();
+            if (deviceId) {
+              const deviceRestored = upsertRegisteredDevice();
+              if (deviceRestored) {
+                broadcastDeviceList();
               }
             }
             break;
@@ -534,6 +570,11 @@ export async function startEmbeddedSignaling(
         return;
       }
 
+      const activeDevice = devices.get(deviceId);
+      if (activeDevice && activeDevice.ws !== ws) {
+        return;
+      }
+
       devices.delete(deviceId);
       broadcastDeviceList();
 
@@ -559,7 +600,7 @@ export async function startEmbeddedSignaling(
     let removedDevice = false;
 
     devices.forEach((device, id) => {
-      if (now - device.timestamp > 15_000) {
+      if (now - device.timestamp > deviceStaleTime) {
         devices.delete(id);
         removedDevice = true;
       }

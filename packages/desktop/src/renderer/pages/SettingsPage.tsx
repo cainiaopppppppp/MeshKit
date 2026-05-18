@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import {
   autoConfigureSignaling,
   getDesktopShareableWebUrl,
   loadSignalingConfigDraft,
+  parseShareInvitePayloadFromUrl,
   parseSharedSignalingConfigFromUrl,
   resetSignalingConfigDraft,
   saveSignalingConfigDraft,
+  type ShareInvitePayload,
   type SignalingConfigDraft,
 } from '@meshkit/web/utils/signalingConfig';
 import { DesktopComputerIcon, MobilePhoneIcon } from '@meshkit/web/components/FileTransferIcons';
@@ -14,7 +17,7 @@ import { DesktopComputerIcon, MobilePhoneIcon } from '@meshkit/web/components/Fi
 import { ShareQrCode } from '../components/ShareQrCode';
 
 type NoticeTone = 'success' | 'warning' | 'info';
-type DesktopServicesStatus = Awaited<ReturnType<Window['electronAPI']['getEmbeddedServiceStatus']>>;
+type DesktopServicesStatus = Awaited<ReturnType<NonNullable<Window['electronAPI']>['getEmbeddedServiceStatus']>>;
 
 interface NoticeState {
   tone: NoticeTone;
@@ -101,7 +104,64 @@ async function copyTextWithFallback(text: string): Promise<boolean> {
   return copied;
 }
 
+function extractRouteSearchFromInviteLink(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const extractFromHash = (hash: string): string => {
+    const questionMarkIndex = hash.indexOf('?');
+    return questionMarkIndex >= 0 ? hash.slice(questionMarkIndex) : '';
+  };
+
+  if (trimmed.startsWith('?')) {
+    return trimmed;
+  }
+
+  try {
+    const parsedUrl = new URL(trimmed);
+    return extractFromHash(parsedUrl.hash) || parsedUrl.search;
+  } catch {
+    const hashIndex = trimmed.indexOf('#');
+    if (hashIndex >= 0) {
+      const hashSearch = extractFromHash(trimmed.slice(hashIndex));
+      if (hashSearch) {
+        return hashSearch;
+      }
+    }
+
+    const questionMarkIndex = trimmed.indexOf('?');
+    return questionMarkIndex >= 0 ? trimmed.slice(questionMarkIndex) : '';
+  }
+}
+
+function resolveInviteTargetPath(invite: ShareInvitePayload | null): string | null {
+  if (!invite) {
+    return null;
+  }
+
+  const normalizedRoute = invite.route
+    ? (invite.route.startsWith('/') ? invite.route : `/${invite.route}`)
+    : null;
+
+  if (invite.stickyNotes) {
+    return normalizedRoute === '/sticky-notes' ? normalizedRoute : '/sticky-notes';
+  }
+
+  if (invite.encryptedChat) {
+    return normalizedRoute === '/encrypted-chat' ? normalizedRoute : '/encrypted-chat';
+  }
+
+  if (invite.pickup) {
+    return normalizedRoute === '/' ? normalizedRoute : '/';
+  }
+
+  return null;
+}
+
 export function SettingsPage() {
+  const navigate = useNavigate();
   const [form, setForm] = useState<SignalingConfigDraft>({
     host: 'localhost',
     wsPort: '7000',
@@ -308,11 +368,14 @@ export function SettingsPage() {
     if (!parsed) {
       setNotice({
         tone: 'warning',
-        message: `${sourceLabel}里没有识别到有效的共享参数。`,
+        message: `未能从${sourceLabel}中识别到有效的共享参数。`,
       });
       return;
     }
 
+    const invitePayload = parseShareInvitePayloadFromUrl(link);
+    const targetPath = resolveInviteTargetPath(invitePayload);
+    const targetSearch = targetPath ? extractRouteSearchFromInviteLink(link) : '';
     const nextDraft = {
       host: parsed.host,
       wsPort: String(parsed.wsPort),
@@ -323,12 +386,22 @@ export function SettingsPage() {
     setForm(nextDraft);
     setNotice({
       tone: 'success',
-      message: `已应用 ${sourceLabel}，当前将连接到 ${parsed.host}。`,
+      message: targetPath
+        ? `已应用${sourceLabel}，正在打开对应页面。`
+        : `已应用${sourceLabel}，当前将连接到 ${parsed.host}。`,
     });
+
+    if (targetPath) {
+      navigate(`${targetPath}${targetSearch}`);
+    }
+  };
+
+  const handleImportInviteLinkResolved = () => {
+    applySharedLink(inviteLinkInput, '邀请链接');
   };
 
   const handleImportInviteLink = () => {
-    applySharedLink(inviteLinkInput, '邀请链接');
+    applySharedLink(inviteLinkInput, '邀请');
   };
 
   const handleRestartServices = async () => {
@@ -658,7 +731,7 @@ export function SettingsPage() {
               />
               <div className="flex flex-wrap gap-3">
                 <button
-                  onClick={handleImportInviteLink}
+                  onClick={handleImportInviteLinkResolved}
                   className="rounded-full bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700"
                 >
                   导入邀请链接
