@@ -1,17 +1,40 @@
-# MeshKit
+# MeshKit - 安全的 P2P 协作工具套件
+
+<div align="center">
+
+**基于 WebRTC 的去中心化 P2P 协作平台**
+
+ **端到端加密** • **文件传输** • **便签协作** • **加密聊天**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue)](https://www.typescriptlang.org/)
+[![React](https://img.shields.io/badge/React-18.2-blue)](https://reactjs.org/)
+[![Electron](https://img.shields.io/badge/Electron-28.0-blue)](https://www.electronjs.org/)
+[![Security](https://img.shields.io/badge/Security-E2EE-green)](https://en.wikipedia.org/wiki/End-to-end_encryption)
+
+</div>
+
+---
+
+## 项目简介
 
 MeshKit 是一个开源的局域网 P2P 小工具项目，当前版本为 `1.1.0`。它包含文件传输、便签墙、加密聊天和 Desktop 本地共享入口，方便在电脑、手机和浏览器之间临时传文件或协作。
 
-![License](https://img.shields.io/badge/license-MIT-green)
-![React](https://img.shields.io/badge/React-18-blue)
-![Electron](https://img.shields.io/badge/Electron-28-blue)
-![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)
 
-> 图片占位：`docs/images/desktop-home.png`
->
-> 图片占位：`docs/images/file-transfer.png`
->
-> 图片占位：`docs/images/share-qr.png`
+
+## 界面预览
+
+<p align="center">
+  <img src="docs/images/filetransfer.png" alt="点对点文件传输界面" width="46%">
+  <img src="docs/images/filetransfer3.png" alt="取件码接收界面" width="46%">
+</p>
+
+<p align="center">
+  <img src="docs/images/noteswall2.png" alt="便签墙界面" width="46%">
+  <img src="docs/images/chat2.png" alt="加密聊天界面" width="46%">
+</p>
+
+更多文件传输、取件码、便签墙和加密聊天截图见 [功能介绍](./docs/功能介绍.md)。
 
 ## 功能概览
 
@@ -76,8 +99,24 @@ docker compose up -d --build
 - 邀请链接可能包含连接参数、取件码或房间信息，只建议发给可信的人。
 - Desktop 共享中心支持 Windows 和 macOS，会在本机启动局域网服务，请确认防火墙允许对应端口访问。
 
-## License
+## 许可证
 
-MIT
+本项目采用 MIT 许可证 - 详见 [LICENSE](./LICENSE) 文件
+
+## 致谢
+
+- [PeerJS](https://peerjs.com/) - WebRTC 封装库
+- [Yjs](https://yjs.dev/) - CRDT 协同编辑
+- [libsodium](https://libsodium.gitbook.io/) - 加密库
+- [React](https://reactjs.org/) - UI 框架
+- [Electron](https://www.electronjs.org/) - 桌面应用框架
+
+---
+
+<div align="center">
+
+**Made with ️ for seamless P2P collaboration**
+
+[GitHub](https://github.com/cainiaopppppppp/MeshKit) • [Issues](https://github.com/cainiaopppppppp/MeshKit/issues) • [Discussions](https://github.com/cainiaopppppppp/MeshKit/discussions)
 
 [![Star History Chart](https://api.star-history.com/svg?repos=cainiaopppppppp/MeshKit&type=Date)](https://star-history.com/#cainiaopppppppp/MeshKit&Date)

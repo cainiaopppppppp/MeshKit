@@ -22,6 +22,18 @@ pnpm dev:desktop
 
 Docker 部署方式请看 [Docker 部署指南](./DOCKER_DEPLOYMENT.md)。Windows 和 macOS 安装包构建请看 [版本发布说明](./VERSION_RELEASE.md)。
 
+## 界面参考
+
+<p align="center">
+  <img src="./images/filetransfer.png" alt="点对点文件传输界面" width="46%">
+  <img src="./images/filetransfer3.png" alt="取件码接收界面" width="46%">
+</p>
+
+<p align="center">
+  <img src="./images/noteswall2.png" alt="便签墙界面" width="46%">
+  <img src="./images/chat2.png" alt="加密聊天界面" width="46%">
+</p>
+
 ## 文件传输
 
 ### 点对点发送

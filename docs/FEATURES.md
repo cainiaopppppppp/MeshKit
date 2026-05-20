@@ -12,11 +12,27 @@
 | Desktop | Windows/macOS 桌面端共享入口 | 内置信令服务、共享网页服务、导入邀请链接 |
 | Docker | 局域网或服务器部署 | Web 静态站点、signaling 服务、健康检查 |
 
+## 界面截图
+
+<p align="center">
+  <img src="./images/filetransfer.png" alt="点对点文件传输界面" width="46%">
+  <img src="./images/filetransfer3.png" alt="取件码接收界面" width="46%">
+</p>
+
+<p align="center">
+  <img src="./images/noteswall2.png" alt="便签墙界面" width="46%">
+  <img src="./images/chat2.png" alt="加密聊天界面" width="46%">
+</p>
+
 ## 文件传输
 
 ### 点对点传输
 
 点对点传输适合两台设备都在线、需要直接发送文件的时候。
+
+<p align="center">
+  <img src="./images/filetransfer.png" alt="文件传输界面" width="720">
+</p>
 
 - 发送方可以选择单个或多个文件，并选择在线目标设备。
 - 接收方会先看到待接收文件列表，可以确认后再开始接收。
@@ -29,6 +45,14 @@
 ### 取件码传输
 
 取件码适合“我先创建一个取件房间，对方稍后加入领取”的用法。
+
+<p align="center">
+  <img src="./images/filetransfer2.png" alt="取件码发送界面" width="720">
+</p>
+
+<p align="center">
+  <img src="./images/filetransfer3.png" alt="取件码接收界面" width="720">
+</p>
 
 - 发送方创建 6 位取件码。
 - 支持复制取件码、邀请链接、展示二维码、下载二维码。
@@ -45,6 +69,10 @@
 
 便签墙用于多人协作记录，底层使用 Yjs 和 WebRTC 同步。
 
+<p align="center">
+  <img src="./images/noteswall.png" alt="便签墙界面" width="720">
+</p>
+
 - 支持创建房间、加入房间、最近房间快速返回。
 - 支持邀请链接、二维码和二维码下载。
 - 支持房间密码校验，也支持便签内容加密配置。
@@ -57,6 +85,10 @@
 ## 加密聊天
 
 加密聊天用于临时房间沟通。
+
+<p align="center">
+  <img src="./images/chat.png" alt="加密聊天界面" width="720">
+</p>
 
 - 支持创建或加入房间。
 - 支持房间密码校验。
