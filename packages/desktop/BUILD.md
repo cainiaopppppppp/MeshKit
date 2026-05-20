@@ -1,6 +1,6 @@
 # MeshKit Desktop 打包发布指南
 
-本文档说明如何构建和发布 MeshKit Desktop 应用。
+本文档说明如何构建和发布 MeshKit Desktop 应用。当前 Desktop 支持 Windows 和 macOS，Linux 目标保留在配置中。
 
 ## 前置要求
 
@@ -68,23 +68,23 @@ pnpm dist:linux # Linux
 所有构建产物在 `packages/desktop/release/` 目录：
 
 ### Windows
-- `MeshKit-1.0.0-win-x64.exe` - NSIS 安装程序 (64位)
-- `MeshKit-1.0.0-win-ia32.exe` - NSIS 安装程序 (32位)
-- `MeshKit-1.0.0-portable.exe` - 便携版 (无需安装)
+- `MeshKit-1.1.0-win-x64.exe` - NSIS 安装程序 (64位)
+- `MeshKit-1.1.0-win-ia32.exe` - NSIS 安装程序 (32位)
+- `MeshKit-1.1.0-portable.exe` - 便携版 (无需安装)
 
 ### macOS
-- `MeshKit-1.0.0-mac-x64.dmg` - Intel Mac 安装镜像
-- `MeshKit-1.0.0-mac-arm64.dmg` - Apple Silicon (M1/M2) 安装镜像
-- `MeshKit-1.0.0-mac-x64.zip` - Intel Mac 压缩包
-- `MeshKit-1.0.0-mac-arm64.zip` - Apple Silicon 压缩包
+- `MeshKit-1.1.0-mac-x64.dmg` - Intel Mac 安装镜像
+- `MeshKit-1.1.0-mac-arm64.dmg` - Apple Silicon 安装镜像
+- `MeshKit-1.1.0-mac-x64.zip` - Intel Mac 压缩包
+- `MeshKit-1.1.0-mac-arm64.zip` - Apple Silicon 压缩包
 
 ### Linux
-- `MeshKit-1.0.0-linux-x64.AppImage` - 通用 AppImage (64位)
-- `MeshKit-1.0.0-linux-arm64.AppImage` - ARM64 AppImage
-- `MeshKit-1.0.0-linux-x64.deb` - Debian/Ubuntu 包
-- `MeshKit-1.0.0-linux-arm64.deb` - ARM64 Debian 包
-- `MeshKit-1.0.0-linux-x64.rpm` - RedHat/Fedora 包
-- `MeshKit-1.0.0-linux-arm64.rpm` - ARM64 RPM 包
+- `MeshKit-1.1.0-linux-x64.AppImage` - 通用 AppImage (64位)
+- `MeshKit-1.1.0-linux-arm64.AppImage` - ARM64 AppImage
+- `MeshKit-1.1.0-linux-x64.deb` - Debian/Ubuntu 包
+- `MeshKit-1.1.0-linux-arm64.deb` - ARM64 Debian 包
+- `MeshKit-1.1.0-linux-x64.rpm` - RedHat/Fedora 包
+- `MeshKit-1.1.0-linux-arm64.rpm` - ARM64 RPM 包
 
 ## 代码签名（可选）
 
@@ -119,7 +119,7 @@ pnpm release:mac
 ```bash
 # 在 packages/desktop/package.json 中修改
 {
- "version": "1.0.0" # 改为新版本号
+ "version": "1.1.0" # 改为新版本号
 }
 ```
 
@@ -165,8 +165,8 @@ pnpm release:mac
 
 ```bash
 # 1. 创建 git tag
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.1.0
+git push origin v1.1.0
 
 # 2. 在 GitHub 创建 Release
 # 上传 release/ 目录中的所有安装包
@@ -207,10 +207,13 @@ pnpm release
 xcode-select --install
 ```
 
-### 3. Windows NSIS 错误
+### 3. macOS 启动后内置服务端口冲突
+macOS 的 AirPlay Receiver 可能占用 `7000`。MeshKit Desktop 会自动从默认端口开始查找后续可用端口，分享链接和设置页会显示实际端口。若仍启动失败，可以先关闭系统设置里的 AirPlay Receiver 后重试。
+
+### 4. Windows NSIS 错误
 安装 NSIS (Windows) 或在 Linux/Mac 上会自动下载。
 
-### 4. Linux AppImage 权限问题
+### 5. Linux AppImage 权限问题
 ```bash
 chmod +x MeshKit-*.AppImage
 ./MeshKit-*.AppImage

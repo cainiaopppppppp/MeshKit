@@ -39,10 +39,11 @@ pnpm dev:desktop
 pnpm dev:signaling
 ```
 
-Windows 安装包：
+Desktop 安装包：
 
 ```bash
 pnpm --filter desktop release:win
+pnpm --filter desktop release:mac
 ```
 
 产物在 `packages/desktop/release`。
@@ -73,7 +74,7 @@ docker compose up -d --build
 
 - 活跃文件传输期间，发送方和接收方都应留在当前页面。
 - 邀请链接可能包含连接参数、取件码或房间信息，只建议发给可信的人。
-- Desktop 共享中心会在本机启动局域网服务，请确认防火墙允许对应端口访问。
+- Desktop 共享中心支持 Windows 和 macOS，会在本机启动局域网服务，请确认防火墙允许对应端口访问。
 
 ## License
 

@@ -48,11 +48,14 @@ pnpm --filter desktop build:web-share
 pnpm --filter desktop type-check
 ```
 
-Windows 安装包：
+Desktop 安装包：
 
 ```bash
 pnpm --filter desktop release:win
+pnpm --filter desktop release:mac
 ```
+
+`release:win` 构建 Windows 安装包，`release:mac` 构建 macOS DMG/ZIP。macOS 包需要在 macOS 环境构建。
 
 Docker 本地部署：
 
@@ -145,6 +148,7 @@ git commit -m "feat: describe the change"
 - 主进程日志在终端中查看。
 - renderer 可以打开 Chromium DevTools 查看页面日志。
 - 如果共享网页不是最新，执行 `pnpm --filter desktop build:web-share`。
+- macOS 上系统 AirPlay Receiver 可能占用 `7000`，内置服务会从默认端口开始自动寻找可用端口。
 
 ### Docker
 
@@ -161,6 +165,6 @@ git commit -m "feat: describe the change"
 - 取件码创建、加入、二维码、邀请链接、刷新 RTC。
 - 便签墙创建、加入、密码、分享、房主销毁。
 - 加密聊天创建、加入、密码、分享、房主销毁。
-- Desktop 导入邀请链接和跳转。
+- Desktop 在 Windows 和 macOS 上导入邀请链接和跳转。
 - Web 与 Desktop 的 MeshKit 图标、标题和 favicon。
 - Docker `web` 和 `signaling` 容器健康检查。

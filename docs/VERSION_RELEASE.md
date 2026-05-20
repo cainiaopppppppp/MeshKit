@@ -15,6 +15,7 @@
 - Web 与 Desktop 使用统一的 MeshKit 图标。
 - Web favicon、apple touch icon、Desktop 构建图标保持一致。
 - Desktop 窗口标题更新为 MeshKit Desktop。
+- Desktop 支持 Windows 和 macOS 打包发布。
 - 主要页面的窄屏和移动端布局经过整理。
 
 ### 分享能力
@@ -99,11 +100,14 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Windows 安装包：
+Desktop 安装包：
 
 ```bash
 pnpm --filter desktop release:win
+pnpm --filter desktop release:mac
 ```
+
+`release:win` 生成 Windows NSIS/Portable，`release:mac` 生成 macOS DMG/ZIP。macOS 包需要在 macOS 环境构建。
 
 ## 手动回归清单
 
@@ -135,11 +139,14 @@ pnpm --filter desktop release:win
 
 Desktop：
 
+- Windows 安装包可以启动并进入共享中心。
+- macOS DMG/ZIP 可以启动并进入共享中心。
 - 首屏品牌图标显示。
 - 导入取件码邀请链接。
 - 导入便签墙邀请链接。
 - 导入加密聊天邀请链接。
 - 本地共享服务可被局域网设备访问。
+- macOS 上默认 `7000` 被系统占用时，会自动使用后续可用端口。
 
 Docker：
 
@@ -180,7 +187,7 @@ git diff --cached
 ### 新增
 - 统一 Web 和 Desktop 的 MeshKit 品牌图标。
 - 文件传输、便签墙、加密聊天支持邀请链接和二维码。
-- Desktop 支持导入邀请链接并跳转到对应页面。
+- Desktop 支持 Windows/macOS，支持导入邀请链接并跳转到对应页面。
 
 ### 改进
 - 补齐点对点和取件码传输的确认、取消和完成流程。

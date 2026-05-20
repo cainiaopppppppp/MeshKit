@@ -61,7 +61,7 @@ Web 应用负责界面和浏览器运行时能力：
 
 ### packages/desktop
 
-Desktop 应用基于 Electron：
+Desktop 应用基于 Electron，当前支持 Windows 和 macOS：
 
 - main 进程负责窗口、本地服务和系统能力。
 - preload 提供受控的 IPC 桥接。
@@ -128,7 +128,7 @@ signaling 服务是轻量 Node 服务：
 | WebSocket | 7000 | 设备发现和房间消息 |
 | PeerJS | 8000 | WebRTC 协商 |
 
-Desktop 内置服务可能根据本地配置使用额外端口。局域网访问时需要确认防火墙放行对应端口。
+Desktop 内置服务会优先使用默认端口；如果本机端口已被占用，会自动尝试后续可用端口。macOS 的 AirPlay Receiver 常占用 `7000`，因此实际 WebSocket 端口以 Desktop 共享中心显示为准。局域网访问时需要确认防火墙放行对应端口。
 
 ## 使用边界
 

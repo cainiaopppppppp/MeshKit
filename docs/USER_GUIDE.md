@@ -20,7 +20,7 @@ pnpm dev:web
 pnpm dev:desktop
 ```
 
-Docker 部署方式请看 [Docker 部署指南](./DOCKER_DEPLOYMENT.md)。Windows 安装包构建请看 [版本发布说明](./VERSION_RELEASE.md)。
+Docker 部署方式请看 [Docker 部署指南](./DOCKER_DEPLOYMENT.md)。Windows 和 macOS 安装包构建请看 [版本发布说明](./VERSION_RELEASE.md)。
 
 ## 文件传输
 
@@ -111,7 +111,7 @@ Docker 部署方式请看 [Docker 部署指南](./DOCKER_DEPLOYMENT.md)。Window
 
 ## Desktop 共享中心
 
-Desktop 版适合希望用桌面程序启动本地共享入口的时候。
+Desktop 版适合希望用桌面程序启动本地共享入口的时候，当前支持 Windows 和 macOS。
 
 1. 启动 MeshKit Desktop。
 2. 在设置或共享入口中启动本地共享服务。
@@ -119,7 +119,7 @@ Desktop 版适合希望用桌面程序启动本地共享入口的时候。
 4. 如果收到 Web 端邀请链接，可以粘贴到 Desktop 中导入。
 5. Desktop 会自动识别链接并跳转到对应功能页。
 
-如果局域网设备无法访问 Desktop 共享地址，请检查主机 IP、端口和防火墙。
+如果局域网设备无法访问 Desktop 共享地址，请检查主机 IP、端口和防火墙。macOS 上如果系统服务占用了 `7000`，Desktop 会自动换到后续可用端口，分享链接里会带上实际端口。
 
 ## 常见问题
 
@@ -127,7 +127,7 @@ Desktop 版适合希望用桌面程序启动本地共享入口的时候。
 
 - 确认双方在同一网络，或网络之间可以互相访问。
 - 确认 signaling 服务已启动。
-- 确认 WebSocket 端口和 PeerJS 端口没有被防火墙拦截。
+- 确认 WebSocket 端口和 PeerJS 端口没有被防火墙拦截。Desktop 端以共享中心显示的实际端口为准。
 - 确认页面中的连接地址配置正确。
 
 ### 邀请链接打不开
