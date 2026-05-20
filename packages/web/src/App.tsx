@@ -1,15 +1,82 @@
-/**
- * MeshKit - 主应用入口，支持多页面路由
- */
+import { useState, type MouseEvent, type ReactElement } from 'react';
+import { BrowserRouter, Link, Route, Routes, useLocation } from 'react-router-dom';
 
-import { useState } from 'react';
-import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { FileTransferPage } from './pages/FileTransferPage';
-import { StickyNotesPage } from './pages/StickyNotesPage';
 import { EncryptedChatPage } from './pages/EncryptedChatPage';
-import { SettingsPage } from './pages/SettingsPage';
+import { FileTransferPage } from './pages/FileTransferPage';
 import { HelpPage } from './pages/HelpPage';
+import { SettingsPage } from './pages/SettingsPage';
+import { StickyNotesPage } from './pages/StickyNotesPage';
+import { AppChromeProvider, useAppChrome } from './contexts/AppChromeContext';
+import { usePickupHostNavigationGuard } from './hooks/usePickupHostNavigationGuard';
 import { getShareableWebUrl } from './utils/signalingConfig';
+
+type MainTabTone = 'blue' | 'orange' | 'green';
+
+const meshkitIconUrl = '/meshkit-icon.png';
+
+interface MainTabItem {
+  to: string;
+  label: string;
+  tone: MainTabTone;
+  icon: ReactElement;
+}
+
+const mainTabs: MainTabItem[] = [
+  {
+    to: '/',
+    label: '文件传输',
+    tone: 'blue',
+    icon: (
+      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v14M5 12l7-7 7 7" />
+      </svg>
+    ),
+  },
+  {
+    to: '/sticky-notes',
+    label: '便签墙',
+    tone: 'orange',
+    icon: (
+      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <rect x="3" y="3" width="18" height="18" rx="2" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h8M8 12h5" />
+      </svg>
+    ),
+  },
+  {
+    to: '/encrypted-chat',
+    label: '加密聊天',
+    tone: 'green',
+    icon: (
+      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <rect x="3" y="11" width="18" height="11" rx="2" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </svg>
+    ),
+  },
+];
+
+function getMainTabClasses(active: boolean, tone: MainTabTone): string {
+  const base = 'inline-flex min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-lg px-2 py-2 text-[13px] font-medium transition-all sm:flex-none sm:gap-1.5 sm:px-3 sm:text-sm';
+  if (!active) {
+    return `${base} text-slate-500 hover:bg-slate-50 hover:text-slate-900`;
+  }
+
+  switch (tone) {
+    case 'orange':
+      return `${base} bg-amber-500 text-white shadow-[0_2px_8px_rgba(245,158,11,0.3)]`;
+    case 'green':
+      return `${base} bg-emerald-500 text-white shadow-[0_2px_8px_rgba(16,185,129,0.3)]`;
+    default:
+      return `${base} bg-[#1a6dff] text-white shadow-[0_2px_8px_rgba(26,109,255,0.3)]`;
+  }
+}
+
+function getActionButtonClasses(active: boolean): string {
+  return active
+    ? 'flex h-[34px] w-[34px] items-center justify-center rounded-lg border border-[#1a6dff] bg-[#1a6dff] text-white shadow-[0_2px_8px_rgba(26,109,255,0.3)] transition'
+    : 'flex h-[34px] w-[34px] items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-400 transition hover:border-[#1a6dff] hover:text-slate-900';
+}
 
 async function copyTextWithFallback(text: string): Promise<boolean> {
   if (navigator.clipboard?.writeText) {
@@ -43,7 +110,6 @@ async function copyTextWithFallback(text: string): Promise<boolean> {
     copied = document.execCommand('copy');
   } catch (error) {
     console.warn('[Navigation] document.execCommand copy failed:', error);
-    copied = false;
   }
 
   document.body.removeChild(textArea);
@@ -58,12 +124,50 @@ async function copyTextWithFallback(text: string): Promise<boolean> {
   return copied;
 }
 
+function BrandHeader() {
+  return (
+    <header className="border-b border-slate-100 bg-white px-4 py-7 text-center">
+      <h1 className="inline-flex items-center justify-center gap-2.5 font-['DM_Sans',_'Noto_Sans_SC',sans-serif] text-[22px] font-bold tracking-[-0.03em] text-slate-900">
+        <img
+          src={meshkitIconUrl}
+          alt=""
+          className="h-8 w-8 rounded-[9px] object-contain shadow-[0_6px_18px_rgba(26,109,255,0.16)]"
+        />
+        <span>
+          Mesh<span className="text-[#1a6dff]">Kit</span>
+        </span>
+      </h1>
+      <div className="mt-1 text-sm text-slate-500">{'P2P 协作工具套件'}</div>
+      <a
+        href="https://github.com/cainiaopppppppp/MeshKit"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-2 inline-flex items-center gap-1.5 text-xs text-slate-400 transition hover:text-[#1a6dff]"
+      >
+        <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12Z" />
+        </svg>
+        GitHub
+      </a>
+    </header>
+  );
+}
+
 function Navigation() {
   const location = useLocation();
   const [isCopying, setIsCopying] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
+  const { isBrandHeaderHidden } = useAppChrome();
+  const { guardNavigation } = usePickupHostNavigationGuard(location.pathname);
 
-  const copyShareUrl = async () => {
+  const handleProtectedNavigation = (event: MouseEvent<HTMLAnchorElement>, targetPath: string) => {
+    if (!guardNavigation(targetPath)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
+
+  const copyInviteLink = async () => {
     setIsCopying(true);
 
     try {
@@ -86,145 +190,102 @@ function Navigation() {
   };
 
   return (
-    <nav className="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-gray-200 px-4 sm:px-6 py-4 relative">
-      <div className="max-w-7xl mx-auto">
-        {/* 右上角按钮组 */}
-        <div className="absolute right-4 top-4 flex gap-2">
-          <button
-            onClick={copyShareUrl}
-            className={`inline-flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-all ${
-              copySuccess
-                ? 'bg-green-500 text-white shadow-md'
-                : 'bg-white/70 text-gray-700 hover:bg-white hover:shadow-md'
-            }`}
-            title="复制邀请链接"
-            disabled={isCopying}
-          >
-            {copySuccess ? (
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="m5 13 4 4L19 7" />
-              </svg>
-            ) : (
+    <>
+      {!isBrandHeaderHidden && <BrandHeader />}
+      <div className="sticky top-0 z-40 border-b border-slate-100 bg-[rgba(245,247,251,0.85)] backdrop-blur-xl">
+        <nav className="mx-auto flex max-w-[480px] flex-wrap items-center justify-center gap-2 px-5 py-2.5 sm:flex-nowrap sm:px-4">
+          <div className="order-2 flex w-full justify-center sm:order-1 sm:flex-1">
+            <div className="flex w-full rounded-[10px] border border-slate-200 bg-white p-[3px] shadow-[0_1px_3px_rgba(26,31,54,0.04)] sm:w-auto">
+              {mainTabs.map((tab) => {
+                const active = location.pathname === tab.to;
+                return (
+                  <Link
+                    key={tab.to}
+                    to={tab.to}
+                    onClick={(event) => handleProtectedNavigation(event, tab.to)}
+                    className={getMainTabClasses(active, tab.tone)}
+                  >
+                    {tab.icon}
+                    <span className="truncate">{tab.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="order-1 ml-auto flex items-center gap-1 sm:order-2 sm:ml-0">
+            <button
+              onClick={copyInviteLink}
+              title={'复制邀请链接'}
+              disabled={isCopying}
+              className={`inline-flex min-h-[34px] shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs font-medium leading-none transition sm:px-3 ${
+                copySuccess
+                  ? 'border-emerald-500 bg-emerald-500 text-white'
+                  : 'border-slate-200 bg-white text-slate-500 hover:border-[#1a6dff] hover:text-slate-900'
+              }`}
+            >
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.75 7.75A2.75 2.75 0 0 1 11.5 5h5.75A2.75 2.75 0 0 1 20 7.75v8.5A2.75 2.75 0 0 1 17.25 19h-5.75a2.75 2.75 0 0 1-2.75-2.75v-8.5Z" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.25 5V4.75A2.75 2.75 0 0 0 12.5 2H6.75A2.75 2.75 0 0 0 4 4.75v8.5A2.75 2.75 0 0 0 6.75 16H8" />
               </svg>
-            )}
-            <span>{isCopying ? '复制中...' : copySuccess ? '已复制邀请链接' : '复制邀请链接'}</span>
-          </button>
-          {/* 帮助按钮 */}
-          <Link
-            to="/help"
-            className="p-2.5 rounded-lg hover:bg-white/60 transition-all hover:shadow-md"
-            title="帮助"
-          >
-            <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </Link>
-          {/* 设置按钮 */}
-          <Link
-            to="/settings"
-            className="p-2.5 rounded-lg hover:bg-white/60 transition-all hover:shadow-md"
-            title="设置"
-          >
-            <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-          </Link>
-        </div>
+              <span className="hidden whitespace-nowrap md:inline">
+                {isCopying
+                  ? '复制中...'
+                  : copySuccess
+                    ? '已复制'
+                    : '邀请链接'}
+              </span>
+            </button>
 
-        {/* 第一行：品牌名称 */}
-        <div className="text-center mb-2">
-          <Link to="/" className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent hover:from-blue-700 hover:to-indigo-700 transition-all">
-            MeshKit
-          </Link>
-        </div>
+            <Link
+              to="/help"
+              title={'帮助'}
+              onClick={(event) => handleProtectedNavigation(event, '/help')}
+              className={getActionButtonClasses(location.pathname === '/help')}
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10" strokeWidth={2} />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 17h.01" />
+              </svg>
+            </Link>
 
-        {/* 第二行：说明文字 */}
-        <div className="text-center mb-2">
-          <div className="text-xs sm:text-sm text-gray-600 font-medium">
-            P2P 协作工具套件
+            <Link
+              to="/settings"
+              title={'设置'}
+              onClick={(event) => handleProtectedNavigation(event, '/settings')}
+              className={getActionButtonClasses(location.pathname === '/settings')}
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065Z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+              </svg>
+            </Link>
           </div>
-        </div>
-
-        {/* GitHub 链接 */}
-        <div className="text-center mb-3">
-          <a
-            href="https://github.com/cainiaopppppppp/MeshKit"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-gray-600 hover:text-gray-900 transition-colors group"
-          >
-            <svg className="w-4 h-4 group-hover:scale-110 transition-transform" fill="currentColor" viewBox="0 0 24 24">
-              <path fillRule="evenodd" d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.17 6.839 9.49.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.603-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.137 20.167 22 16.418 22 12c0-5.523-4.477-10-10-10z" clipRule="evenodd" />
-            </svg>
-            <span className="text-xs">GitHub</span>
-          </a>
-        </div>
-
-        {/* 第三行：导航标签（居中） */}
-        <div className="flex gap-2 justify-center">
-          <Link
-            to="/"
-            className={`px-4 sm:px-5 py-2.5 rounded-xl font-medium transition-all text-sm sm:text-base touch-manipulation inline-flex items-center gap-2 ${
-              location.pathname === '/'
-                ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30 scale-105'
-                : 'text-gray-700 hover:bg-white hover:shadow-md hover:scale-105 bg-white/60'
-            }`}
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-            </svg>
-            <span>文件传输</span>
-          </Link>
-          <Link
-            to="/sticky-notes"
-            className={`px-4 sm:px-5 py-2.5 rounded-xl font-medium transition-all text-sm sm:text-base touch-manipulation inline-flex items-center gap-2 ${
-              location.pathname === '/sticky-notes'
-                ? 'bg-gradient-to-r from-yellow-500 to-orange-500 text-white shadow-lg shadow-yellow-500/30 scale-105'
-                : 'text-gray-700 hover:bg-white hover:shadow-md hover:scale-105 bg-white/60'
-            }`}
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
-            </svg>
-            <span>便签墙</span>
-          </Link>
-          <Link
-            to="/encrypted-chat"
-            className={`px-4 sm:px-5 py-2.5 rounded-xl font-medium transition-all text-sm sm:text-base touch-manipulation inline-flex items-center gap-2 ${
-              location.pathname === '/encrypted-chat'
-                ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow-lg shadow-green-500/30 scale-105'
-                : 'text-gray-700 hover:bg-white hover:shadow-md hover:scale-105 bg-white/60'
-            }`}
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
-            <span>加密聊天</span>
-          </Link>
-        </div>
+        </nav>
       </div>
-    </nav>
+    </>
   );
 }
 
 function App() {
   return (
-    <BrowserRouter>
-      <div className="min-h-screen bg-gray-50">
-        <Navigation />
-        <Routes>
-          <Route path="/" element={<FileTransferPage />} />
-          <Route path="/sticky-notes" element={<StickyNotesPage />} />
-          <Route path="/encrypted-chat" element={<EncryptedChatPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/help" element={<HelpPage />} />
-        </Routes>
-      </div>
-    </BrowserRouter>
+    <AppChromeProvider>
+      <BrowserRouter>
+        <div className="flex min-h-screen flex-col bg-[#f5f7fb]">
+          <Navigation />
+          <div className="flex-1 min-h-0">
+            <Routes>
+              <Route path="/" element={<FileTransferPage />} />
+              <Route path="/sticky-notes" element={<StickyNotesPage />} />
+              <Route path="/encrypted-chat" element={<EncryptedChatPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/help" element={<HelpPage />} />
+            </Routes>
+          </div>
+        </div>
+      </BrowserRouter>
+    </AppChromeProvider>
   );
 }
 
