@@ -18,7 +18,7 @@
     "build:web-share": "pnpm --filter web build && node ./scripts/copy-web-share.mjs",
     "prepare:builder": "node ./scripts/prepare-electron-builder.mjs",
     "prebuild": "pnpm clean",
-    "postinstall": "electron-builder install-app-deps",
+    "postinstall": "pnpm prepare:builder && electron-builder install-app-deps",
     "package": "pnpm build && pnpm prepare:builder && electron-builder --dir",
     "release": "pnpm build && pnpm prepare:builder && electron-builder",
     "release:win": "pnpm build && pnpm prepare:builder && electron-builder --win",
@@ -28,7 +28,7 @@
     "dist:win": "pnpm prepare:builder && electron-builder --win",
     "dist:mac": "pnpm prepare:builder && electron-builder --mac",
     "dist:linux": "pnpm prepare:builder && electron-builder --linux",
-    "type-check": "tsc --noEmit",
+    "type-check": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "clean": "rm -rf dist release"
   },
   "dependencies": {

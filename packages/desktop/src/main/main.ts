@@ -9,7 +9,7 @@ import {
   type EmbeddedSignalingController,
   type EmbeddedSignalingStatus,
 } from './embeddedSignaling';
-import { getLocalIPAddresses, getPreferredLocalHost } from './networkUtils';
+import { findAvailablePort, getLocalIPAddresses, getPreferredLocalHost } from './networkUtils';
 import {
   startShareDiscovery,
   type DiscoveredShare,
@@ -31,6 +31,9 @@ let sharingEnabled = true;
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 const rendererDevUrl = 'http://127.0.0.1:5173';
+const embeddedServiceHost = '0.0.0.0';
+const preferredEmbeddedWsPort = 7000;
+const preferredEmbeddedPeerPort = 8000;
 
 let signalingStatus: EmbeddedSignalingStatus = {
   running: false,
@@ -95,10 +98,13 @@ async function startEmbeddedServices() {
   }
 
   try {
+    const wsPort = await findAvailablePort(preferredEmbeddedWsPort, 20, embeddedServiceHost);
+    const peerPort = await findAvailablePort(preferredEmbeddedPeerPort, 20, embeddedServiceHost);
+
     signalingController = await startEmbeddedSignaling({
-      host: '0.0.0.0',
-      wsPort: 7000,
-      peerPort: 8000,
+      host: embeddedServiceHost,
+      wsPort,
+      peerPort,
     });
     signalingStatus = signalingController.status;
     console.log(`[desktop] Embedded signaling ready: ${signalingStatus.wsUrl}`);

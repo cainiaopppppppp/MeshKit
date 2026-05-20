@@ -46,8 +46,7 @@ export function EncryptedChatPage() {
   const [isInRoom, setIsInRoom] = useState(false);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  // @ts-expect-error onlineCount is kept while the full user list UI is deferred
-  const [users, setUsers] = useState<ChatUser[]>([]);
+  const [, setUsers] = useState<ChatUser[]>([]);
   const [onlineCount, setOnlineCount] = useState(1);
   const [messageInput, setMessageInput] = useState('');
   const [selfDestructTime, setSelfDestructTime] = useState<number | undefined>(undefined);
@@ -616,7 +615,7 @@ export function EncryptedChatPage() {
             <p className="mb-1.5 font-['DM_Sans',_'Noto_Sans_SC',sans-serif] text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-600">MeshKit Private Chat</p>
             <h1 className="text-3xl font-bold tracking-tight text-slate-950">{'加密聊天'}</h1>
             <p className="mt-3 text-sm leading-6 text-slate-600">
-              {'一个加密聊天房间，可以定时销毁信息'}
+              {'一个加密聊天房间，可以定时销毁信息。'}
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               <ExperienceBadge tone="emerald">{'端到端保护'}</ExperienceBadge>

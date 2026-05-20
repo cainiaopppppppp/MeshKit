@@ -37,8 +37,6 @@ export class ChatRoom {
   // 回调函数
   private onMessageReceived?: (message: ChatMessage) => void;
   private onUserJoined?: (user: ChatUser) => void;
-  // @ts-expect-error - TODO: Implement user leave detection via WebRTC peer events
-  private onUserLeft?: (userId: string) => void;
   private onUsersChanged?: (users: ChatUser[], totalCount: number) => void; // 用户列表变化（包括自己）
   private onConnectionChange?: (connected: boolean) => void;
   private onRoomExpiring?: (remainingTime: number) => void;
@@ -114,7 +112,6 @@ export class ChatRoom {
     if (callbacks) {
       this.onMessageReceived = callbacks.onMessageReceived;
       this.onUserJoined = callbacks.onUserJoined;
-      this.onUserLeft = callbacks.onUserLeft;
       this.onUsersChanged = callbacks.onUsersChanged;
       this.onConnectionChange = callbacks.onConnectionChange;
       this.onRoomExpiring = callbacks.onRoomExpiring;
