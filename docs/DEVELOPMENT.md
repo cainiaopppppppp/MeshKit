@@ -1,395 +1,166 @@
 # 开发指南
 
-本文档介绍如何参与 MeshKit 项目的开发。
+本文档面向参与 MeshKit 开源项目开发和打包的人。功能使用说明请看 [用户指南](./USER_GUIDE.md)，代码结构请看 [架构说明](./ARCHITECTURE.md)。
 
-## 前置要求
+## 环境要求
 
-### 必需工具
+- Node.js 18 或更高版本。
+- pnpm 8 或更高版本。
+- Git。
+- 构建 Desktop 安装包时需要当前系统可用的 Electron Builder 依赖。
+- Docker 部署测试需要 Docker 24 和 Docker Compose Plugin 2。
 
-- **Node.js** >= 18.0.0
-- **pnpm** >= 8.0.0
-- **Git** >= 2.30
-
-### 推荐工具
-
-- **VS Code** - 代码编辑器
-- **TypeScript extension** - TS 语言支持
-- **ESLint extension** - 代码检查
-- **Prettier extension** - 代码格式化
-
-## 环境搭建
-
-### 1. 克隆项目
-
-```bash
-# 使用 HTTPS
-git clone https://github.com/cainiaopppppppp/MeshKit.git
-
-# 或使用 SSH
-git clone git@github.com:cainiaopppppppp/MeshKit.git
-
-cd MeshKit
-```
-
-### 2. 安装依赖
+## 安装依赖
 
 ```bash
 pnpm install
 ```
 
-### 3. 构建核心包
+core 包被 Web 和 Desktop 依赖，首次运行或修改 core 后建议先构建：
 
 ```bash
-pnpm --filter @meshkit/core build
+pnpm --filter core build
 ```
 
-### 4. 启动开发环境
+## 常用开发命令
 
 ```bash
-# 方式一：同时启动所有服务
 pnpm dev
-
-# 方式二：分别启动
-pnpm dev:signaling # 终端1
-pnpm dev:web # 终端2
 ```
 
-## 项目结构
-
-```
-MeshKit/
-├── packages/
-│ ├── core/ # 核心业务逻辑
-│ │ ├── src/
-│ │ │ ├── managers/ # 管理器
-│ │ │ ├── types/ # 类型定义
-│ │ │ ├── utils/ # 工具函数
-│ │ │ └── index.ts # 导出入口
-│ │ ├── package.json
-│ │ ├── tsconfig.json
-│ │ └── tsup.config.ts # 构建配置
-│ │
-│ ├── web/ # Web 应用
-│ │ ├── src/
-│ │ │ ├── components/ # React 组件
-│ │ │ ├── pages/ # 页面组件
-│ │ │ ├── hooks/ # React Hooks
-│ │ │ ├── store/ # Zustand 状态管理
-│ │ │ ├── utils/ # 工具函数
-│ │ │ ├── App.tsx # 根组件
-│ │ │ └── main.tsx # 入口文件
-│ │ ├── public/ # 静态资源
-│ │ ├── package.json
-│ │ ├── vite.config.ts # Vite 配置
-│ │ └── tailwind.config.js # Tailwind 配置
-│ │
-│ └── desktop/ # Desktop 应用
-│ ├── src/
-│ │ ├── main/ # Electron 主进程
-│ │ ├── preload/ # 预加载脚本
-│ │ └── renderer/ # 渲染进程 (React)
-│ ├── build/ # 构建资源 (图标等)
-│ └── package.json
-│
-├── apps/
-│ └── signaling/ # 信令服务器
-│ ├── src/
-│ │ └── index.ts # 服务器入口
-│ └── package.json
-│
-├── docs/ # 文档
-├── turbo.json # Turborepo 配置
-├── pnpm-workspace.yaml # pnpm 工作空间
-└── package.json # 根配置
-```
-
-## 开发流程
-
-### 开发新功能
-
-1. **创建功能分支**
- ```bash
- git checkout -b feature/your-feature-name
- ```
-
-2. **编写代码**
- - 遵循现有代码风格
- - 添加必要的注释
- - 编写类型定义
-
-3. **测试功能**
- - 在浏览器中测试
- - 测试多设备场景
- - 测试边界条件
-
-4. **提交代码**
- ```bash
- git add .
- git commit -m "feat: your feature description"
- ```
-
-5. **推送并创建 PR**
- ```bash
- git push origin feature/your-feature-name
- ```
-
-### 修复 Bug
-
-1. **创建修复分支**
- ```bash
- git checkout -b fix/bug-description
- ```
-
-2. **定位问题**
- - 查看控制台错误
- - 使用 Chrome DevTools 调试
- - 检查网络请求
-
-3. **修复并测试**
- - 修复问题
- - 确保不引入新问题
- - 添加回归测试
-
-4. **提交**
- ```bash
- git commit -m "fix: bug description"
- ```
-
-## 代码规范
-
-### TypeScript
-
-```typescript
-// 好的示例
-interface User {
- id: string;
- name: string;
- email?: string;
-}
-
-function getUserName(user: User): string {
- return user.name;
-}
-
-// 避免
-function getUserName(user: any) { // 不要使用 any
- return user.name;
-}
-```
-
-### React 组件
-
-```tsx
-// 好的示例
-interface Props {
- title: string;
- onClose: () => void;
-}
-
-export function Modal({ title, onClose }: Props) {
- return (
- <div>
- <h1>{title}</h1>
- <button onClick={onClose}>Close</button>
- </div>
- );
-}
-
-// 避免
-export function Modal(props: any) { // 不明确的 props
- return <div>{props.title}</div>;
-}
-```
-
-### 命名规范
-
-- **文件名**: PascalCase for components, camelCase for utils
- - `FileTransferPage.tsx`
- - `useP2P.ts`
- - `formatBytes.ts`
-
-- **变量名**: camelCase
- - `deviceId`
- - `isConnected`
-
-- **常量**: UPPER_SNAKE_CASE
- - `MAX_FILE_SIZE`
- - `DEFAULT_TIMEOUT`
-
-- **类型/接口**: PascalCase
- - `interface Device {}`
- - `type MessageType = 'text' | 'file'`
-
-### Commit 规范
-
-遵循 [Conventional Commits](https://www.conventionalcommits.org/)：
-
-```
-<type>(<scope>): <description>
-
-[optional body]
-
-[optional footer]
-```
-
-**类型 (type)**:
-- `feat`: 新功能
-- `fix`: Bug 修复
-- `docs`: 文档更新
-- `style`: 代码格式(不影响功能)
-- `refactor`: 重构
-- `perf`: 性能优化
-- `test`: 测试相关
-- `chore`: 构建/工具配置
-
-**示例**:
-```
-feat(file-transfer): add resume capability
-fix(chat): correct message order
-docs: update installation guide
-```
-
-## 调试技巧
-
-### Web 应用调试
-
-1. **Chrome DevTools**
- ```javascript
- // 在代码中添加断点
- debugger;
-
- // 查看 WebRTC 连接
- chrome://webrtc-internals
- ```
-
-2. **查看日志**
- ```typescript
- // Core 包日志
- console.log('[P2PManager]', ...);
- console.log('[FileTransfer]', ...);
- ```
-
-3. **网络请求**
- - 打开 Network 标签
- - 查看 WebSocket 连接
- - 检查 WebRTC 数据通道
-
-### Desktop 应用调试
+`pnpm dev` 会通过 Turborepo 启动各包的开发任务。也可以按模块启动：
 
 ```bash
-# 启动时开启调试
-pnpm dev:electron
-
-# 主进程日志会显示在终端
-# 渲染进程可使用 Chrome DevTools
+pnpm dev:signaling
+pnpm dev:web
+pnpm dev:desktop
 ```
 
-### 常见问题
+常用检查和构建命令：
 
-1. **Core 包未更新**
- ```bash
- # 重新构建 Core 包
- pnpm --filter @meshkit/core build
- ```
-
-2. **端口被占用**
- ```bash
- # 查找占用端口的进程
- lsof -i :3000 # Mac/Linux
- netstat -ano | findstr :3000 # Windows
-
- # 杀死进程或更改端口
- ```
-
-3. **TypeScript 错误**
- ```bash
- # 类型检查
- pnpm type-check
-
- # 清除缓存
- rm -rf node_modules/.cache
- ```
-
-## 测试
-
-### 手动测试
-
-1. **文件传输测试**
- - 小文件 (<1MB)
- - 大文件 (>1GB)
- - 多文件批量传输
- - 不同文件类型
-
-2. **便签墙测试**
- - 创建/编辑/删除便签
- - 多设备同步
- - 离线后上线同步
-
-3. **加密聊天测试**
- - 发送/接收消息
- - 连接建立/断开
- - 密钥交换
-
-### 跨浏览器测试
-
-- Chrome/Edge 
-- Firefox 
-- Safari 
-- Mobile Safari 
-- Mobile Chrome 
-
-## 性能优化
-
-### 文件传输优化
-
-```typescript
-// 调整 chunk 大小
-const CHUNK_SIZE = 1024 * 1024; // 1MB
-
-// 调整发送延迟
-const SEND_DELAY = 1; // ms
+```bash
+pnpm --filter web type-check
+pnpm --filter web build
+pnpm --filter desktop build:main
+pnpm --filter desktop build:preload
+pnpm --filter desktop build:renderer
+pnpm --filter desktop build:web-share
+pnpm --filter desktop type-check
 ```
 
-### 便签墙优化
+Windows 安装包：
 
-```typescript
-// 减少重新渲染
-const MemoizedNote = React.memo(Note);
-
-// 虚拟化大列表 (如有大量便签)
-import { FixedSizeList } from 'react-window';
+```bash
+pnpm --filter desktop release:win
 ```
 
-### 加密聊天优化
+Docker 本地部署：
 
-```typescript
-// 复用加密上下文
-const cryptoContext = useMemo(() => {
- return sodium.crypto_box_beforenm(peerPublicKey, secretKey);
-}, [peerPublicKey, secretKey]);
+```bash
+docker compose up -d --build
+docker compose ps
+docker compose logs -f
 ```
 
-## 贡献检查清单
+## 开发顺序建议
 
-提交 PR 前，请确保：
+修改共享逻辑时：
 
-- [ ] 代码遵循项目规范
-- [ ] 添加了必要的类型定义
-- [ ] 功能在多个浏览器中测试
-- [ ] 没有 TypeScript 错误
-- [ ] 没有 ESLint 警告
-- [ ] Commit 信息符合规范
-- [ ] 更新了相关文档
-- [ ] 测试了边界条件
+1. 先改 `packages/core`。
+2. 执行 `pnpm --filter core build`。
+3. 在 `packages/web` 验证浏览器端行为。
+4. 在 `packages/desktop` 验证 Electron renderer 和本地服务行为。
 
-## 获取帮助
+修改纯 Web 页面时：
 
-遇到问题？
+1. 修改 `packages/web/src`。
+2. 执行 `pnpm --filter web type-check`。
+3. 执行 `pnpm --filter desktop build:web-share`，确保 Desktop 内置共享页同步更新。
 
-- 查看 [文档](../README.md#文档)
-- 提交 [Issue](https://github.com/cainiaopppppppp/MeshKit/issues)
-- 参与 [Discussions](https://github.com/cainiaopppppppp/MeshKit/discussions)
+修改 Desktop 主进程时：
 
----
+1. 修改 `packages/desktop/src/main` 或 `packages/desktop/src/preload`。
+2. 执行 `pnpm --filter desktop build:main` 和 `pnpm --filter desktop build:preload`。
+3. 启动 Desktop 验证窗口、IPC 和本地服务。
 
-**感谢你的贡献！** 
+## 代码组织
+
+```text
+packages/core/src      尽量与运行环境无关的共享逻辑
+packages/web/src       Web 页面、组件、hooks、状态和工具
+packages/desktop/src   Electron main、preload、renderer
+apps/signaling/src     signaling server
+docs/                  文档
+```
+
+保持边界清晰：
+
+- 不把 Electron API 放进 core。
+- 不把浏览器 UI 状态放进 signaling。
+- 不让 signaling 保存文件内容。
+- 共享类型优先放在 core。
+
+## Git 提交建议
+
+如果一次开发包含很多变化，建议分批提交：
+
+```bash
+git status --short
+git add README.md docs/
+git commit -m "docs: refresh MeshKit documentation"
+
+git add packages/web/public packages/desktop/build
+git commit -m "chore: update MeshKit app icons"
+
+git add packages/web/src packages/desktop/src
+git commit -m "feat: add MeshKit brand icon to app headers"
+```
+
+也可以用交互式暂存精确挑选代码块：
+
+```bash
+git add -p
+git diff --cached
+git commit -m "feat: describe the change"
+```
+
+提交前不要把本机凭据提交进去，例如 `.codex/auth.json`、`.ssh/config`、`.env`、私钥文件等。
+
+## 调试
+
+### WebRTC
+
+- 浏览器中打开 `chrome://webrtc-internals` 查看连接状态。
+- 确认 signaling 地址、PeerJS 地址、端口和防火墙。
+- 取件码页面可以使用“刷新 RTC”重新建立连接。
+
+### Web
+
+- 使用浏览器 DevTools 查看 console、network 和 storage。
+- 如果页面拿不到最新 core 逻辑，先重新构建 core。
+
+### Desktop
+
+- 使用 `pnpm dev:desktop` 启动桌面端。
+- 主进程日志在终端中查看。
+- renderer 可以打开 Chromium DevTools 查看页面日志。
+- 如果共享网页不是最新，执行 `pnpm --filter desktop build:web-share`。
+
+### Docker
+
+- `docker compose ps` 查看容器状态。
+- `docker compose logs -f signaling` 查看 signaling 日志。
+- `docker compose logs -f web` 查看 Web 静态站点日志。
+- `/healthz` 可以检查容器内部服务是否正常。
+
+## 回归检查清单
+
+发布或合并前建议至少检查：
+
+- 点对点文件发送、接收、取消、完成。
+- 取件码创建、加入、二维码、邀请链接、刷新 RTC。
+- 便签墙创建、加入、密码、分享、房主销毁。
+- 加密聊天创建、加入、密码、分享、房主销毁。
+- Desktop 导入邀请链接和跳转。
+- Web 与 Desktop 的 MeshKit 图标、标题和 favicon。
+- Docker `web` 和 `signaling` 容器健康检查。
