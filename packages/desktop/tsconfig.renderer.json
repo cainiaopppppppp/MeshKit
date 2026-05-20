@@ -20,13 +20,5 @@
       "@meshkit/web/*": ["../web/src/*"]
     }
   },
-  "include": ["src/renderer/**/*"],
-  "references": [
-    {
-      "path": "./tsconfig.main.json"
-    },
-    {
-      "path": "./tsconfig.preload.json"
-    }
-  ]
+  "include": ["src/renderer/**/*"]
 }

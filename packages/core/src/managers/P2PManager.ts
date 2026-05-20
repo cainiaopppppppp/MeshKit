@@ -1,26 +1,22 @@
-/**
- * P2PManager - P2P连接管理器
- * 管理所有WebRTC P2P连接的生命周期
- */
 import type Peer from 'peerjs';
 import type { DataConnection } from 'peerjs';
 import { eventBus } from '../utils/EventBus';
 import { config } from '../utils/Config';
 
-// 动态导入PeerJS（处理不同环境）
 let PeerJS: typeof Peer | null = null;
 
 export class P2PManager {
   private peer: Peer | null = null;
   private myDeviceId: string | null = null;
   private connections: Map<string, DataConnection> = new Map();
-  private isInitialized: boolean = false;
+  private isInitialized = false;
+  private peerRefreshPromise: Promise<void> | null = null;
 
-  /**
-   * 初始化P2P管理器
-   */
+  private static readonly PEER_READY_TIMEOUT = 8000;
+  private static readonly PEER_REFRESH_RETRY_DELAYS = [1200, 2500, 4000];
+
   async init(deviceId: string): Promise<void> {
-    if (this.isInitialized) {
+    if (this.isInitialized && this.peer && !this.peer.destroyed) {
       console.warn('[P2PManager] Already initialized');
       return;
     }
@@ -28,60 +24,15 @@ export class P2PManager {
     this.myDeviceId = deviceId;
 
     try {
-      // 加载PeerJS
       await this.loadPeerJS();
 
       if (!PeerJS) {
         throw new Error('Failed to load PeerJS');
       }
 
-      // 创建Peer实例
-      const webrtcConfig = config.get('webrtc');
-      const peerjsConfig = config.get('peerjs');
-      const signalingConfig = config.get('signalingServer');
-      const resolvedSignalingConfig = config.getResolvedSignalingServer();
-
-      // 根据配置选择PeerJS服务器
-      const peerOptions: any = {
-        config: webrtcConfig.config as RTCConfiguration,
-        debug: peerjsConfig?.debug ?? 2,
-      };
-
-      // 优先级1: 使用用户配置的信令服务器地址
-      if (signalingConfig?.host && signalingConfig?.peerPort) {
-        console.log('[P2PManager] Using configured signaling server:', `${signalingConfig.host}:${signalingConfig.peerPort}`);
-        peerOptions.host = signalingConfig.host;
-        peerOptions.port = signalingConfig.peerPort;
-        peerOptions.path = peerjsConfig?.path || '/peerjs';
-      }
-      // 优先级2: 动态获取当前访问的hostname（浏览器环境）
-      else if (peerjsConfig?.port && typeof window !== 'undefined') {
-        console.log('[P2PManager] Using resolved PeerJS server:', `${resolvedSignalingConfig.host}:${resolvedSignalingConfig.peerPort}`);
-        peerOptions.host = resolvedSignalingConfig.host;
-        peerOptions.port = resolvedSignalingConfig.peerPort;
-        peerOptions.path = peerjsConfig.path || '/';
-      }
-      // 优先级3: 使用配置文件中的固定host（兼容旧配置）
-      else if (peerjsConfig?.host) {
-        console.log('[P2PManager] Using configured PeerJS server:', `${peerjsConfig.host}:${peerjsConfig.port}`);
-        peerOptions.host = peerjsConfig.host;
-        peerOptions.port = peerjsConfig.port;
-        peerOptions.path = peerjsConfig.path;
-      }
-      // 优先级4: 使用默认公共服务器
-      else {
-        console.log('[P2PManager] Creating Peer with default PeerJS server...');
-        console.log('[P2PManager] ⚠️  Note: Using public PeerJS server (may be slow in China)');
-      }
-
-      this.peer = new PeerJS(deviceId, peerOptions);
-
-      // 设置事件监听
-      this.setupPeerEvents();
-
-      this.isInitialized = true;
-      eventBus.emit('p2p:initialized', { deviceId });
+      await this.openPeerWithRetry(deviceId);
     } catch (error) {
+      await this.destroyPeer();
       console.error('[P2PManager] Initialization failed:', error);
       eventBus.emit('p2p:connection:error', {
         peer: deviceId,
@@ -91,20 +42,17 @@ export class P2PManager {
     }
   }
 
-  /**
-   * 动态加载PeerJS
-   */
   private async loadPeerJS(): Promise<void> {
-    if (PeerJS) return;
+    if (PeerJS) {
+      return;
+    }
 
     try {
-      // 尝试从全局加载（浏览器环境）
       if (typeof window !== 'undefined' && (window as any).Peer) {
         PeerJS = (window as any).Peer;
         return;
       }
 
-      // 尝试从npm包加载
       const module = await import('peerjs');
       PeerJS = module.default || module;
     } catch (error) {
@@ -113,11 +61,172 @@ export class P2PManager {
     }
   }
 
-  /**
-   * 设置Peer事件监听
-   */
+  private buildPeerOptions(): any {
+    const webrtcConfig = config.get('webrtc');
+    const peerjsConfig = config.get('peerjs');
+    const signalingConfig = config.get('signalingServer');
+    const resolvedSignalingConfig = config.getResolvedSignalingServer();
+
+    const peerOptions: any = {
+      config: webrtcConfig.config as RTCConfiguration,
+      debug: peerjsConfig?.debug ?? 2,
+    };
+
+    if (signalingConfig?.host && signalingConfig?.peerPort) {
+      console.log(
+        '[P2PManager] Using configured signaling server:',
+        `${signalingConfig.host}:${signalingConfig.peerPort}`,
+      );
+      peerOptions.host = signalingConfig.host;
+      peerOptions.port = signalingConfig.peerPort;
+      peerOptions.path = peerjsConfig?.path || '/peerjs';
+    } else if (peerjsConfig?.port && typeof window !== 'undefined') {
+      console.log(
+        '[P2PManager] Using resolved PeerJS server:',
+        `${resolvedSignalingConfig.host}:${resolvedSignalingConfig.peerPort}`,
+      );
+      peerOptions.host = resolvedSignalingConfig.host;
+      peerOptions.port = resolvedSignalingConfig.peerPort;
+      peerOptions.path = peerjsConfig.path || '/';
+    } else if (peerjsConfig?.host) {
+      console.log(
+        '[P2PManager] Using configured PeerJS server:',
+        `${peerjsConfig.host}:${peerjsConfig.port}`,
+      );
+      peerOptions.host = peerjsConfig.host;
+      peerOptions.port = peerjsConfig.port;
+      peerOptions.path = peerjsConfig.path;
+    } else {
+      console.log('[P2PManager] Creating Peer with default PeerJS server...');
+      console.log('[P2PManager] Note: Using public PeerJS server (may be slow in China)');
+    }
+
+    return peerOptions;
+  }
+
+  private createPeer(deviceId: string): void {
+    if (!PeerJS) {
+      throw new Error('Failed to load PeerJS');
+    }
+
+    this.peer = new PeerJS(deviceId, this.buildPeerOptions());
+    this.setupPeerEvents();
+  }
+
+  private shouldRetryPeerRefresh(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error ?? '');
+    return message.includes('is taken') || message.includes('unavailable-id');
+  }
+
+  private async delay(ms: number): Promise<void> {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  private async destroyPeer(settleDelayMs = 0): Promise<void> {
+    const currentPeer = this.peer;
+    this.peer = null;
+    this.isInitialized = false;
+
+    if (currentPeer && !currentPeer.destroyed) {
+      try {
+        currentPeer.disconnect();
+      } catch (error) {
+        console.warn('[P2PManager] Failed to disconnect peer cleanly:', error);
+      }
+
+      try {
+        currentPeer.destroy();
+      } catch (error) {
+        console.warn('[P2PManager] Failed to destroy peer cleanly:', error);
+      }
+    }
+
+    if (settleDelayMs > 0) {
+      await this.delay(settleDelayMs);
+    }
+  }
+
+  private async openPeer(deviceId: string): Promise<void> {
+    this.createPeer(deviceId);
+    await this.waitForPeerReady();
+    this.isInitialized = true;
+    eventBus.emit('p2p:initialized', { deviceId });
+  }
+
+  private async openPeerWithRetry(deviceId: string): Promise<void> {
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt < P2PManager.PEER_REFRESH_RETRY_DELAYS.length; attempt += 1) {
+      try {
+        await this.openPeer(deviceId);
+        return;
+      } catch (error) {
+        lastError = error;
+        const attemptNumber = attempt + 1;
+        const delayMs = P2PManager.PEER_REFRESH_RETRY_DELAYS[attempt];
+
+        console.warn(
+          `[P2PManager] Peer open attempt ${attemptNumber}/${P2PManager.PEER_REFRESH_RETRY_DELAYS.length} failed:`,
+          error,
+        );
+
+        await this.destroyPeer();
+
+        if (!this.shouldRetryPeerRefresh(error) || attemptNumber === P2PManager.PEER_REFRESH_RETRY_DELAYS.length) {
+          throw error;
+        }
+
+        console.warn(`[P2PManager] Waiting ${delayMs}ms before retrying peer initialization...`);
+        await this.delay(delayMs);
+      }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error('Peer initialization failed');
+  }
+
+  private async waitForPeerReady(timeoutMs = P2PManager.PEER_READY_TIMEOUT): Promise<void> {
+    if (!this.peer) {
+      throw new Error('Peer is not initialized');
+    }
+
+    const currentPeer = this.peer;
+    if ((currentPeer as any).open) {
+      return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error('Peer ready timeout'));
+      }, timeoutMs);
+
+      const handleOpen = () => {
+        cleanup();
+        resolve();
+      };
+
+      const handleError = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        currentPeer.off('open', handleOpen);
+        currentPeer.off('error', handleError);
+      };
+
+      currentPeer.on('open', handleOpen);
+      currentPeer.on('error', handleError);
+    });
+  }
+
   private setupPeerEvents(): void {
-    if (!this.peer) return;
+    if (!this.peer) {
+      return;
+    }
 
     this.peer.on('open', (id: string) => {
       console.log('[P2PManager] Peer opened with ID:', id);
@@ -139,7 +248,6 @@ export class P2PManager {
 
     this.peer.on('disconnected', () => {
       console.warn('[P2PManager] Peer disconnected');
-      // 尝试重连
       if (this.peer && !this.peer.destroyed) {
         this.peer.reconnect();
       }
@@ -147,19 +255,15 @@ export class P2PManager {
 
     this.peer.on('close', () => {
       console.log('[P2PManager] Peer closed');
+      this.isInitialized = false;
     });
   }
 
-  /**
-   * 连接到远程设备
-   * 如果连接已存在且处于open状态，则复用该连接
-   */
   connect(targetDeviceId: string, metadata?: any): DataConnection {
     if (!this.isInitialized || !this.peer) {
       throw new Error('P2PManager not initialized');
     }
 
-    // 检查是否已有outgoing连接
     const connectionId = `outgoing-${targetDeviceId}`;
     const existingConn = this.connections.get(connectionId);
 
@@ -168,7 +272,6 @@ export class P2PManager {
       return existingConn;
     }
 
-    // 如果连接存在但已关闭，清理它
     if (existingConn) {
       console.log(`[P2PManager] Cleaning up closed connection to ${targetDeviceId}`);
       this.connections.delete(connectionId);
@@ -176,38 +279,29 @@ export class P2PManager {
 
     console.log(`[P2PManager] Creating new connection to ${targetDeviceId}...`);
 
-    // 配置数据连接选项
     const conn = this.peer.connect(targetDeviceId, {
       reliable: true,
-      serialization: 'binary', // 使用二进制序列化，而非JSON（关键！）
+      serialization: 'binary',
       metadata,
     });
 
     this.setupConnectionEvents(conn, 'outgoing');
-
     return conn;
   }
 
-  /**
-   * 处理传入连接
-   */
   private handleIncomingConnection(conn: DataConnection): void {
     this.setupConnectionEvents(conn, 'incoming');
   }
 
-  /**
-   * 设置连接事件监听
-   */
   private setupConnectionEvents(
     conn: DataConnection,
-    direction: 'incoming' | 'outgoing'
+    direction: 'incoming' | 'outgoing',
   ): void {
     const connectionId = `${direction}-${conn.peer}`;
     this.connections.set(connectionId, conn);
 
     console.log(`[P2PManager] Setting up connection: ${connectionId}`);
 
-    // 添加连接超时检测（30秒）
     let isOpened = false;
     const timeout = setTimeout(() => {
       if (!isOpened) {
@@ -223,7 +317,7 @@ export class P2PManager {
     conn.on('open', () => {
       isOpened = true;
       clearTimeout(timeout);
-      console.log(`[P2PManager] ✅ Connection opened: ${connectionId}`);
+      console.log(`[P2PManager] Connection opened: ${connectionId}`);
       eventBus.emit('p2p:connection:open', {
         peer: conn.peer,
         direction,
@@ -238,6 +332,7 @@ export class P2PManager {
     });
 
     conn.on('close', () => {
+      clearTimeout(timeout);
       console.log(`[P2PManager] Connection closed: ${connectionId}`);
       this.connections.delete(connectionId);
       eventBus.emit('p2p:connection:close', {
@@ -246,6 +341,7 @@ export class P2PManager {
     });
 
     conn.on('error', (error: Error) => {
+      clearTimeout(timeout);
       console.error(`[P2PManager] Connection error: ${connectionId}`, error);
       eventBus.emit('p2p:connection:error', {
         peer: conn.peer,
@@ -254,17 +350,11 @@ export class P2PManager {
     });
   }
 
-  /**
-   * 获取连接
-   */
   getConnection(peerId: string, direction: 'incoming' | 'outgoing'): DataConnection | undefined {
     const connectionId = `${direction}-${peerId}`;
     return this.connections.get(connectionId);
   }
 
-  /**
-   * 关闭指定连接
-   */
   closeConnection(peerId: string, direction: 'incoming' | 'outgoing'): void {
     const connectionId = `${direction}-${peerId}`;
     const conn = this.connections.get(connectionId);
@@ -274,17 +364,34 @@ export class P2PManager {
     }
   }
 
-  /**
-   * 关闭所有连接
-   */
   closeAllConnections(): void {
     this.connections.forEach((conn) => conn.close());
     this.connections.clear();
   }
 
-  /**
-   * 销毁P2P管理器
-   */
+  async refreshPeer(): Promise<void> {
+    if (this.peerRefreshPromise) {
+      return this.peerRefreshPromise;
+    }
+
+    if (!this.myDeviceId) {
+      throw new Error('P2PManager not initialized');
+    }
+
+    this.peerRefreshPromise = (async () => {
+      const currentDeviceId = this.myDeviceId!;
+
+      this.closeAllConnections();
+      await this.destroyPeer(800);
+      await this.loadPeerJS();
+      await this.openPeerWithRetry(currentDeviceId);
+    })().finally(() => {
+      this.peerRefreshPromise = null;
+    });
+
+    return this.peerRefreshPromise;
+  }
+
   destroy(): void {
     this.closeAllConnections();
 
@@ -294,11 +401,9 @@ export class P2PManager {
     }
 
     this.isInitialized = false;
+    this.peerRefreshPromise = null;
   }
 
-  /**
-   * 获取连接状态
-   */
   getStatus() {
     return {
       initialized: this.isInitialized,
@@ -310,5 +415,4 @@ export class P2PManager {
   }
 }
 
-// 导出单例
 export const p2pManager = new P2PManager();

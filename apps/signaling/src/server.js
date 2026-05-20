@@ -1,207 +1,167 @@
-// Signaling Server - P2P局域网文件传输
-const WebSocket = require('ws');
-const express = require('express');
+const os = require('os');
 const http = require('http');
-const path = require('path');
+const express = require('express');
+const WebSocket = require('ws');
 const { ExpressPeerServer } = require('peer');
 
-const WS_PORT = 7000;    // WebSocket信令服务器端口
-const PEER_PORT = 8000;  // PeerJS服务器端口
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
 
-// ===== PeerJS 服务器 (端口 8000) =====
-const peerApp = express();
-const peerHttpServer = http.createServer(peerApp);
+const HOST = process.env.HOST || '0.0.0.0';
+const WS_PORT = parsePositiveInt(process.env.WS_PORT, 7000);
+const PEER_PORT = parsePositiveInt(process.env.PEER_PORT, 8000);
+const DEVICE_STALE_TIME = parsePositiveInt(process.env.DEVICE_STALE_TIME, 15_000);
+const ROOM_STALE_TIME = parsePositiveInt(process.env.ROOM_STALE_TIME, 3_600_000);
+const CLEANUP_INTERVAL = parsePositiveInt(process.env.CLEANUP_INTERVAL, 5_000);
 
-// 创建 PeerJS 服务器
-const peerServer = ExpressPeerServer(peerHttpServer, {
-  debug: true,
-  path: '/',  // 内部路径设为根路径，因为已经挂载到 /peerjs
-  allow_discovery: true,
-});
-
-// 挂载 PeerJS 服务器到 /peerjs 路径
-peerApp.use('/peerjs', peerServer);
-
-// PeerJS根路径响应
-peerApp.get('/', (req, res) => {
-  res.send('PeerJS Server Running\n');
-});
-
-peerServer.on('connection', (client) => {
-  console.log(`🔗 PeerJS客户端连接: ${client.getId()}`);
-});
-
-peerServer.on('disconnect', (client) => {
-  console.log(`🔌 PeerJS客户端断开: ${client.getId()}`);
-});
-
-// ===== WebSocket 信令服务器 (端口 7000) =====
-const wsApp = express();
-const wsHttpServer = http.createServer(wsApp);
-
-// WebSocket根路径响应
-wsApp.get('/', (req, res) => {
-  res.send('WebSocket Signaling Server Running\n');
-});
-
-// 创建 WebSocket 服务器
-const wss = new WebSocket.Server({
-  server: wsHttpServer,
-  path: '/ws'
-});
-
-// 存储所有连接的设备
 const devices = new Map();
-
-// 存储所有房间
 const rooms = new Map();
+const topics = new Map();
 
-// y-webrtc 相关：存储 topic 订阅关系
-const topics = new Map(); // topic -> Set<ws>
+function getLocalIP() {
+  const interfaces = os.networkInterfaces();
+  const addresses = [];
 
-/**
- * 生成6位房间号
- */
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] || []) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        addresses.push(iface.address);
+      }
+    }
+  }
+
+  const lanAddress = addresses.find((address) =>
+    address.startsWith('192.168.') || address.startsWith('10.'),
+  );
+
+  return lanAddress || addresses[0] || '127.0.0.1';
+}
+
 function generateRoomId() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-/**
- * 创建房间
- */
-function createRoom(hostId, hostName, roomData) {
-  const roomId = generateRoomId();
+function serializeRoom(room) {
+  const { password, ...rest } = room;
+  return {
+    ...rest,
+    hasPassword: !!password,
+  };
+}
 
+function createRoom(hostId, hostName, roomData = {}) {
+  const roomId = generateRoomId();
   const room = {
     id: roomId,
-    name: `${hostName}的传输房间`,
-    hostId: hostId,
-    members: [{
-      deviceId: hostId,
-      deviceName: hostName,
-      role: 'host',
-      status: 'waiting',
-      joinedAt: Date.now(),
-    }],
+    name: `${hostName} 的传输房间`,
+    hostId,
+    members: [
+      {
+        deviceId: hostId,
+        deviceName: hostName,
+        role: 'host',
+        status: 'waiting',
+        joinedAt: Date.now(),
+      },
+    ],
     createdAt: Date.now(),
     fileInfo: roomData.fileInfo,
     fileList: roomData.fileList,
     isMultiFile: roomData.isMultiFile,
     status: 'waiting',
-    password: roomData.password || null  // 存储密码（如果有）
+    password: roomData.password || null,
   };
 
   rooms.set(roomId, room);
-  console.log(`🏠 房间创建: ${roomId} by ${hostName}${roomData.password ? ' 🔒 (有密码保护)' : ''}`, roomData.isMultiFile ? `(多文件模式, ${roomData.fileList?.length || 0} 个文件)` : '(单文件模式)');
-
+  console.log(
+    `[signaling] Room created: ${roomId} by ${hostName}${room.password ? ' (password protected)' : ''}`,
+  );
   return room;
 }
 
-/**
- * 加入房间
- */
 function joinRoom(roomId, deviceId, deviceName, password) {
   const room = rooms.get(roomId);
-
   if (!room) {
     throw new Error('房间不存在');
   }
 
-  console.log(`[DEBUG] 加入房间请求 - 房间: ${roomId}, 用户: ${deviceName}, 提供的密码: ${password === undefined ? 'undefined' : password === null ? 'null' : `"${password}"`}`);
-  console.log(`[DEBUG] 房间密码状态 - 房间密码: ${room.password === undefined ? 'undefined' : room.password === null ? 'null' : `"${room.password}"`}`);
-
-  // 🔒 严格验证密码（如果房间有密码保护）
-  if (room.password !== null && room.password !== undefined && room.password !== '') {
-    console.log(`[DEBUG] 房间需要密码验证`);
-
-    // 必须提供密码
-    if (password === undefined || password === null) {
-      console.log(`❌ ${deviceName} 未提供密码，无法加入房间: ${roomId}`);
+  if (room.password) {
+    if (password === undefined || password === null || String(password).trim() === '') {
       throw new Error('此房间需要密码');
     }
 
-    // 密码不能为空
-    if (typeof password !== 'string' || password.trim() === '') {
-      console.log(`❌ ${deviceName} 密码为空，无法加入房间: ${roomId}`);
-      throw new Error('密码不能为空');
-    }
-
-    // 密码必须匹配
     if (password !== room.password) {
-      console.log(`❌ ${deviceName} 密码错误，无法加入房间: ${roomId} (提供: "${password}", 正确: "${room.password}")`);
       throw new Error('密码错误');
     }
-
-    console.log(`✅ ${deviceName} 密码验证成功`);
-  } else {
-    console.log(`[DEBUG] 房间无密码保护，直接允许加入`);
   }
 
   if (room.status !== 'waiting') {
-    throw new Error('房间已开始传输，无法加入');
+    throw new Error('房间已开始传输，暂时无法加入');
   }
 
-  // 检查是否已在房间中
-  const existingMember = room.members.find(m => m.deviceId === deviceId);
+  const existingMember = room.members.find((member) => member.deviceId === deviceId);
   if (existingMember) {
-    return room; // 已在房间中，直接返回
+    return room;
   }
 
-  // 添加成员
-  const member = {
-    deviceId: deviceId,
-    deviceName: deviceName,
+  room.members.push({
+    deviceId,
+    deviceName,
     role: 'member',
     status: 'waiting',
     joinedAt: Date.now(),
-  };
+  });
 
-  room.members.push(member);
-  console.log(`👤 ${deviceName} 加入房间 ${roomId}${room.password ? ' (密码验证通过)' : ''}`);
-
+  console.log(`[signaling] ${deviceName} joined room ${roomId}`);
   return room;
 }
 
-/**
- * 离开房间
- */
 function leaveRoom(roomId, deviceId) {
   const room = rooms.get(roomId);
-
   if (!room) {
-    return;
+    return null;
   }
 
-  // 如果是主持人离开，解散房间
   if (room.hostId === deviceId) {
-    console.log(`🏠 房间解散: ${roomId} (主持人离开)`);
     rooms.delete(roomId);
-    return { dissolved: true };
+    console.log(`[signaling] Room dissolved: ${roomId}`);
+    return { dissolved: true, room };
   }
 
-  // 移除成员
-  room.members = room.members.filter(m => m.deviceId !== deviceId);
-  console.log(`👋 成员离开房间 ${roomId}`);
-
+  room.members = room.members.filter((member) => member.deviceId !== deviceId);
+  console.log(`[signaling] Member left room ${roomId}: ${deviceId}`);
   return { dissolved: false, room };
 }
 
-/**
- * 广播房间更新到房间内所有成员
- */
-function broadcastRoomUpdate(room) {
-  // 移除密码字段，只广播必要信息
-  const roomInfo = { ...room };
-  const hasPassword = !!room.password;
-  delete roomInfo.password;
-  roomInfo.hasPassword = hasPassword;
+function broadcastDeviceList() {
+  const deviceList = Array.from(devices.values()).map((device) => ({
+    id: device.id,
+    name: device.name,
+    timestamp: device.timestamp,
+  }));
 
   const message = JSON.stringify({
-    type: 'room-update',
-    room: roomInfo
+    type: 'device-list',
+    devices: deviceList,
   });
 
-  room.members.forEach(member => {
+  devices.forEach((device) => {
+    if (device.ws.readyState === WebSocket.OPEN) {
+      device.ws.send(message);
+    }
+  });
+}
+
+function broadcastRoomUpdate(room) {
+  const roomInfo = serializeRoom(room);
+  const message = JSON.stringify({
+    type: 'room-update',
+    room: roomInfo,
+  });
+
+  room.members.forEach((member) => {
     const device = devices.get(member.deviceId);
     if (device && device.ws.readyState === WebSocket.OPEN) {
       device.ws.send(message);
@@ -209,232 +169,307 @@ function broadcastRoomUpdate(room) {
   });
 }
 
+const peerApp = express();
+const peerHttpServer = http.createServer(peerApp);
+const peerServer = ExpressPeerServer(peerHttpServer, {
+  debug: true,
+  path: '/',
+  allow_discovery: true,
+});
+
+peerApp.use('/peerjs', peerServer);
+peerApp.get('/', (_req, res) => {
+  res.send('MeshKit PeerJS server is running.\n');
+});
+peerApp.get('/healthz', (_req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'peerjs',
+    port: PEER_PORT,
+  });
+});
+
+peerServer.on('connection', (client) => {
+  console.log(`[signaling] Peer connected: ${client.getId()}`);
+});
+
+peerServer.on('disconnect', (client) => {
+  console.log(`[signaling] Peer disconnected: ${client.getId()}`);
+});
+
+const wsApp = express();
+const wsHttpServer = http.createServer(wsApp);
+
+wsApp.get('/', (_req, res) => {
+  res.send('MeshKit signaling server is running.\n');
+});
+wsApp.get('/healthz', (_req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'signaling',
+    port: WS_PORT,
+    devices: devices.size,
+    rooms: rooms.size,
+  });
+});
+
+const wss = new WebSocket.Server({
+  server: wsHttpServer,
+  path: '/ws',
+});
+
 wss.on('connection', (ws, req) => {
-  const clientIp = req.socket.remoteAddress;
-  console.log('✅ 新设备连接:', clientIp);
+  const clientIp = req?.socket?.remoteAddress;
+  console.log(`[signaling] WebSocket client connected from ${clientIp || 'unknown'}`);
 
   let deviceId = null;
+  let deviceName = null;
 
-  ws.on('message', (message) => {
+  const upsertRegisteredDevice = (nextDeviceName) => {
+    if (!deviceId) {
+      return false;
+    }
+
+    const resolvedDeviceName =
+      typeof nextDeviceName === 'string' && nextDeviceName.trim() ? nextDeviceName : deviceName;
+
+    if (!resolvedDeviceName) {
+      return false;
+    }
+
+    const existingDevice = devices.get(deviceId);
+    const hasChanged =
+      !existingDevice || existingDevice.ws !== ws || existingDevice.name !== resolvedDeviceName;
+
+    deviceName = resolvedDeviceName;
+    devices.set(deviceId, {
+      id: deviceId,
+      name: resolvedDeviceName,
+      ws,
+      timestamp: Date.now(),
+    });
+
+    return hasChanged;
+  };
+
+  ws.on('message', (rawMessage) => {
     try {
-      const data = JSON.parse(message);
+      const data = JSON.parse(String(rawMessage));
 
-      // y-webrtc 协议支持
+      if (deviceId && data.type !== 'register') {
+        const restored = upsertRegisteredDevice(
+          typeof data.deviceName === 'string' ? data.deviceName : undefined,
+        );
+        if (restored) {
+          broadcastDeviceList();
+        }
+      }
+
       switch (data.type) {
         case 'subscribe':
-          // y-webrtc: 订阅 topics
-          if (data.topics && Array.isArray(data.topics)) {
-            data.topics.forEach(topic => {
+          if (Array.isArray(data.topics)) {
+            data.topics.forEach((topic) => {
               if (!topics.has(topic)) {
                 topics.set(topic, new Set());
               }
               topics.get(topic).add(ws);
-              console.log(`📌 [y-webrtc] 订阅 topic: ${topic}`);
             });
           }
           break;
 
         case 'unsubscribe':
-          // y-webrtc: 取消订阅 topics
-          if (data.topics && Array.isArray(data.topics)) {
-            data.topics.forEach(topic => {
-              if (topics.has(topic)) {
-                topics.get(topic).delete(ws);
-                if (topics.get(topic).size === 0) {
-                  topics.delete(topic);
-                }
-                console.log(`📍 [y-webrtc] 取消订阅 topic: ${topic}`);
+          if (Array.isArray(data.topics)) {
+            data.topics.forEach((topic) => {
+              const subscribers = topics.get(topic);
+              if (!subscribers) {
+                return;
+              }
+
+              subscribers.delete(ws);
+              if (subscribers.size === 0) {
+                topics.delete(topic);
               }
             });
           }
           break;
 
         case 'publish':
-          // y-webrtc: 发布消息到 topic
           if (data.topic && topics.has(data.topic)) {
             const subscribers = topics.get(data.topic);
-            const messageToSend = JSON.stringify(data);
+            const message = JSON.stringify(data);
 
-            subscribers.forEach(subscriber => {
-              // 不发送给自己
+            subscribers.forEach((subscriber) => {
               if (subscriber !== ws && subscriber.readyState === WebSocket.OPEN) {
-                subscriber.send(messageToSend);
+                subscriber.send(message);
               }
             });
           }
           break;
 
         case 'ping':
-          // y-webrtc: 心跳
           ws.send(JSON.stringify({ type: 'pong' }));
           break;
 
         case 'register':
-          deviceId = data.deviceId;
-          devices.set(deviceId, {
-            id: deviceId,
-            name: data.deviceName,
-            ws: ws,
-            timestamp: Date.now()
-          });
-          console.log(`📱 设备注册: ${data.deviceName} (${deviceId})`);
+          if (!data.deviceId || !data.deviceName) {
+            break;
+          }
 
-          // 广播设备列表
+          deviceId = data.deviceId;
+          deviceName = data.deviceName;
+          upsertRegisteredDevice(data.deviceName);
           broadcastDeviceList();
           break;
 
         case 'offer':
         case 'answer':
-        case 'ice-candidate':
-          // 转发信令消息（PeerJS已处理，这里保留作为扩展）
+        case 'ice-candidate': {
           const targetDevice = devices.get(data.target);
           if (targetDevice && targetDevice.ws.readyState === WebSocket.OPEN) {
-            targetDevice.ws.send(JSON.stringify({
-              type: data.type,
-              from: deviceId,
-              data: data.data
-            }));
+            targetDevice.ws.send(
+              JSON.stringify({
+                type: data.type,
+                from: deviceId,
+                data: data.data,
+              }),
+            );
           }
           break;
+        }
 
         case 'heartbeat':
-          // 心跳
-          if (deviceId && devices.has(deviceId)) {
-            devices.get(deviceId).timestamp = Date.now();
+          if (deviceId) {
+            const restored = upsertRegisteredDevice();
+            if (restored) {
+              broadcastDeviceList();
+            }
           }
           break;
 
         case 'create-room':
-          // 创建房间
           try {
-            const room = createRoom(deviceId, data.deviceName, data.data);
-            // 移除密码字段，只广播必要信息
-            const roomInfo = { ...room };
-            delete roomInfo.password;
-            roomInfo.hasPassword = !!room.password;
+            if (!deviceId) {
+              throw new Error('设备尚未注册');
+            }
 
-            ws.send(JSON.stringify({
-              type: 'room-update',
-              room: roomInfo
-            }));
+            const room = createRoom(deviceId, data.deviceName, data.data || {});
+            ws.send(
+              JSON.stringify({
+                type: 'room-update',
+                room: serializeRoom(room),
+              }),
+            );
           } catch (error) {
-            ws.send(JSON.stringify({
-              type: 'room-error',
-              error: error.message
-            }));
+            ws.send(
+              JSON.stringify({
+                type: 'room-error',
+                error: error instanceof Error ? error.message : '创建房间失败',
+              }),
+            );
           }
           break;
 
         case 'join-room':
-          // 加入房间
           try {
-            const room = joinRoom(data.roomId, deviceId, data.deviceName, data.password);
-            // 移除密码字段，只广播必要信息
-            const roomInfo = { ...room };
-            delete roomInfo.password;
-            roomInfo.hasPassword = !!room.password;
+            if (!deviceId) {
+              throw new Error('设备尚未注册');
+            }
 
-            // 通知加入者
-            ws.send(JSON.stringify({
-              type: 'room-update',
-              room: roomInfo
-            }));
-            // 广播房间更新给所有成员（传递原始room对象，函数内部会处理密码）
+            const room = joinRoom(data.roomId, deviceId, data.deviceName, data.password);
+            ws.send(
+              JSON.stringify({
+                type: 'room-update',
+                room: serializeRoom(room),
+              }),
+            );
             broadcastRoomUpdate(room);
           } catch (error) {
-            ws.send(JSON.stringify({
-              type: 'room-error',
-              error: error.message
-            }));
+            ws.send(
+              JSON.stringify({
+                type: 'room-error',
+                error: error instanceof Error ? error.message : '加入房间失败',
+              }),
+            );
           }
           break;
 
-        case 'leave-room':
-          // 离开房间
-          try {
-            const result = leaveRoom(data.roomId, deviceId);
-            if (result && result.dissolved) {
-              // 通知所有成员房间已解散
-              const room = rooms.get(data.roomId);
-              if (room) {
-                broadcastRoomUpdate({ ...room, status: 'dissolved' });
-              }
-            } else if (result && result.room) {
-              // 广播房间更新
-              broadcastRoomUpdate(result.room);
-            }
-          } catch (error) {
-            console.error('离开房间错误:', error);
+        case 'leave-room': {
+          if (!deviceId) {
+            break;
+          }
+
+          const result = leaveRoom(data.roomId, deviceId);
+          if (result?.room) {
+            broadcastRoomUpdate({
+              ...result.room,
+              status: result.dissolved ? 'dissolved' : result.room.status,
+            });
           }
           break;
+        }
 
         case 'start-broadcast':
-          // 开始群发传输
           try {
             const room = rooms.get(data.roomId);
             if (!room) {
               throw new Error('房间不存在');
             }
+
             if (room.hostId !== deviceId) {
-              throw new Error('只有主持人可以开始传输');
+              throw new Error('只有房主可以开始传输');
             }
 
             room.status = 'transferring';
-            console.log(`📤 开始群发: 房间 ${data.roomId}, 共 ${room.members.length} 个成员`);
-
-            // 广播开始传输
             broadcastRoomUpdate(room);
           } catch (error) {
-            ws.send(JSON.stringify({
-              type: 'room-error',
-              error: error.message
-            }));
+            ws.send(
+              JSON.stringify({
+                type: 'room-error',
+                error: error instanceof Error ? error.message : '开始传输失败',
+              }),
+            );
           }
           break;
 
         case 'file-request':
-          // 接收方请求文件
           try {
             const room = rooms.get(data.roomId);
             if (!room) {
               throw new Error('房间不存在');
             }
 
-            // 更新请求者的状态为 'receiving'
             const requesterId = data.requesterId || deviceId;
-            const member = room.members.find(m => m.deviceId === requesterId);
+            const member = room.members.find((item) => item.deviceId === requesterId);
             if (member) {
               member.status = 'receiving';
               member.progress = 0;
-              console.log(`📥 成员状态更新: ${member.deviceName} -> receiving`);
-
-              // 广播房间更新给所有成员
               broadcastRoomUpdate(room);
             }
 
-            // 转发文件请求给房主
             const hostDevice = devices.get(room.hostId);
-            if (hostDevice && hostDevice.ws.readyState === WebSocket.OPEN) {
-              hostDevice.ws.send(JSON.stringify({
+            if (!hostDevice || hostDevice.ws.readyState !== WebSocket.OPEN) {
+              throw new Error('房主当前不在线');
+            }
+
+            hostDevice.ws.send(
+              JSON.stringify({
                 type: 'file-request',
                 fileIndex: data.fileIndex,
-                requesterId: requesterId,
-                roomId: data.roomId
-              }));
-              console.log(`📥 文件请求: 房间 ${data.roomId}, 文件索引 ${data.fileIndex}, 请求者 ${deviceId}`);
-            } else {
-              throw new Error('房主不在线');
-            }
+                requesterId,
+                roomId: data.roomId,
+              }),
+            );
           } catch (error) {
-            ws.send(JSON.stringify({
-              type: 'room-error',
-              error: error.message
-            }));
+            ws.send(
+              JSON.stringify({
+                type: 'room-error',
+                error: error instanceof Error ? error.message : '请求文件失败',
+              }),
+            );
           }
           break;
 
         case 'update-room-files':
-          // 更新房间文件列表（房主添加/删除文件）
           try {
             const room = rooms.get(data.roomId);
             if (!room) {
@@ -442,208 +477,134 @@ wss.on('connection', (ws, req) => {
             }
 
             if (room.hostId !== deviceId) {
-              throw new Error('只有主持人可以更新文件列表');
+              throw new Error('只有房主可以更新房间文件');
             }
 
-            // 更新房间文件列表
             room.fileList = data.fileList;
-            room.isMultiFile = data.fileList && data.fileList.length > 1;
-
-            console.log(`📝 更新房间文件列表: 房间 ${data.roomId}, 共 ${data.fileList?.length || 0} 个文件`);
-
-            // 广播房间更新给所有成员
+            room.isMultiFile = Array.isArray(data.fileList) && data.fileList.length > 1;
             broadcastRoomUpdate(room);
           } catch (error) {
-            ws.send(JSON.stringify({
-              type: 'room-error',
-              error: error.message
-            }));
+            ws.send(
+              JSON.stringify({
+                type: 'room-error',
+                error: error instanceof Error ? error.message : '更新房间文件失败',
+              }),
+            );
           }
           break;
 
         case 'update-member-status':
-          // 更新成员状态（接收方通知房主）
           try {
             const room = rooms.get(data.roomId);
             if (!room) {
               throw new Error('房间不存在');
             }
 
-            // 查找成员并更新状态
-            const member = room.members.find(m => m.deviceId === data.deviceId);
-            if (member) {
-              member.status = data.status;
-              if (data.progress !== undefined) {
-                member.progress = data.progress;
-              }
-
-              console.log(`✅ 成员状态更新: ${member.deviceName} -> ${data.status}${data.progress !== undefined ? ` (${data.progress}%)` : ''}`);
-
-              // 广播房间更新给所有成员
-              broadcastRoomUpdate(room);
-            } else {
-              console.warn(`⚠️ 未找到成员: ${data.deviceId} 在房间 ${data.roomId}`);
+            const member = room.members.find((item) => item.deviceId === data.deviceId);
+            if (!member) {
+              throw new Error('成员不存在');
             }
+
+            member.status = data.status;
+            if (typeof data.progress === 'number') {
+              member.progress = data.progress;
+            }
+
+            broadcastRoomUpdate(room);
           } catch (error) {
-            ws.send(JSON.stringify({
-              type: 'room-error',
-              error: error.message
-            }));
+            ws.send(
+              JSON.stringify({
+                type: 'room-error',
+                error: error instanceof Error ? error.message : '更新成员状态失败',
+              }),
+            );
           }
+          break;
+
+        default:
           break;
       }
     } catch (error) {
-      console.error('❌ 消息处理错误:', error);
+      console.error('[signaling] Failed to handle message:', error);
     }
   });
 
   ws.on('close', () => {
-    // 清理 y-webrtc 订阅
     topics.forEach((subscribers, topic) => {
-      if (subscribers.has(ws)) {
-        subscribers.delete(ws);
-        if (subscribers.size === 0) {
-          topics.delete(topic);
-        }
+      subscribers.delete(ws);
+      if (subscribers.size === 0) {
+        topics.delete(topic);
       }
     });
 
-    if (deviceId) {
-      console.log(`👋 设备断开: ${deviceId}`);
-      devices.delete(deviceId);
-      broadcastDeviceList();
-
-      // 离开所有加入的房间
-      rooms.forEach((room, roomId) => {
-        const result = leaveRoom(roomId, deviceId);
-        if (result && result.dissolved) {
-          // 房间已解散
-          broadcastRoomUpdate({ ...room, status: 'dissolved' });
-        } else if (result && result.room) {
-          // 广播房间更新
-          broadcastRoomUpdate(result.room);
-        }
-      });
+    if (!deviceId) {
+      return;
     }
+
+    const activeDevice = devices.get(deviceId);
+    if (activeDevice && activeDevice.ws !== ws) {
+      return;
+    }
+
+    devices.delete(deviceId);
+    broadcastDeviceList();
+
+    rooms.forEach((room, roomId) => {
+      const result = leaveRoom(roomId, deviceId);
+      if (result?.room) {
+        broadcastRoomUpdate({
+          ...result.room,
+          status: result.dissolved ? 'dissolved' : result.room.status,
+        });
+      }
+    });
   });
 
   ws.on('error', (error) => {
-    console.error('❌ WebSocket 错误:', error);
+    console.error('[signaling] WebSocket error:', error);
   });
 });
 
-// 广播设备列表
-function broadcastDeviceList() {
-  const deviceList = Array.from(devices.values()).map(device => ({
-    id: device.id,
-    name: device.name,
-    timestamp: device.timestamp
-  }));
-
-  const message = JSON.stringify({
-    type: 'device-list',
-    devices: deviceList
-  });
-
-  console.log(`📡 广播设备列表 (共 ${deviceList.length} 个设备)`);
-
-  devices.forEach(device => {
-    if (device.ws.readyState === WebSocket.OPEN) {
-      device.ws.send(message);
-    }
-  });
-}
-
-// 定期清理离线设备和过期房间
 setInterval(() => {
   const now = Date.now();
-  let cleaned = false;
+  let removedDevice = false;
 
   devices.forEach((device, id) => {
-    if (now - device.timestamp > 15000) { // 15秒超时
-      console.log(`🧹 清理离线设备: ${id}`);
+    if (now - device.timestamp > DEVICE_STALE_TIME) {
       devices.delete(id);
-      cleaned = true;
+      removedDevice = true;
     }
   });
 
-  if (cleaned) {
+  if (removedDevice) {
     broadcastDeviceList();
   }
 
-  // 清理超过1小时的房间
   rooms.forEach((room, roomId) => {
-    if (now - room.createdAt > 3600000) { // 1小时
-      console.log(`🧹 清理过期房间: ${roomId}`);
+    if (now - room.createdAt > ROOM_STALE_TIME) {
       rooms.delete(roomId);
     }
   });
-}, 5000);
+}, CLEANUP_INTERVAL);
 
-// 获取本机IP地址
-function getLocalIP() {
-  const os = require('os');
-  const interfaces = os.networkInterfaces();
-  const addresses = [];
-
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      // 跳过内部和非IPv4地址
-      if (iface.family === 'IPv4' && !iface.internal) {
-        addresses.push(iface.address);
-      }
-    }
-  }
-
-  // 优先返回常见的局域网地址段（192.168.x.x 或 10.x.x.x）
-  const lanAddress = addresses.find(addr =>
-    addr.startsWith('192.168.') || addr.startsWith('10.')
-  );
-
-  if (lanAddress) {
-    return lanAddress;
-  }
-
-  // 其次返回其他地址
-  if (addresses.length > 0) {
-    return addresses[0];
-  }
-
-  return '127.0.0.1';
-}
-
-// 启动 WebSocket 服务器 (端口 7000)
-wsHttpServer.listen(WS_PORT, '0.0.0.0', () => {
+wsHttpServer.listen(WS_PORT, HOST, () => {
   const localIP = getLocalIP();
-
   console.log('');
   console.log('=================================');
-  console.log('📱 WebSocket信令服务器已启动！');
+  console.log('MeshKit WebSocket signaling server started');
   console.log('=================================');
-  console.log('');
-  console.log(`   ws://${localIP}:${WS_PORT}/ws`);
-  console.log(`   ws://localhost:${WS_PORT}/ws`);
-  console.log('');
-  console.log('💡 用于房间管理和信令交换');
-  console.log('=================================');
+  console.log(`ws://${localIP}:${WS_PORT}/ws`);
+  console.log(`ws://localhost:${WS_PORT}/ws`);
   console.log('');
 });
 
-// 启动 PeerJS 服务器 (端口 8000)
-peerHttpServer.listen(PEER_PORT, '0.0.0.0', () => {
+peerHttpServer.listen(PEER_PORT, HOST, () => {
   const localIP = getLocalIP();
-
   console.log('');
   console.log('=================================');
-  console.log('🔗 PeerJS服务器已启动！');
+  console.log('MeshKit PeerJS server started');
   console.log('=================================');
-  console.log('');
-  console.log(`   http://${localIP}:${PEER_PORT}/peerjs`);
-  console.log(`   http://localhost:${PEER_PORT}/peerjs`);
-  console.log('');
-  console.log('💡 用于WebRTC P2P连接建立');
-  console.log('=================================');
-  console.log('');
-  console.log('📊 服务器日志：');
+  console.log(`http://${localIP}:${PEER_PORT}/peerjs`);
+  console.log(`http://localhost:${PEER_PORT}/peerjs`);
   console.log('');
 });

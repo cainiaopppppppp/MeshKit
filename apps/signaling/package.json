@@ -1,7 +1,7 @@
 {
   "name": "@meshkit/signaling",
-  "version": "1.0.0",
-  "description": "MeshKit Signaling Server - 信令服务器",
+  "version": "1.1.0",
+  "description": "MeshKit signaling server",
   "main": "src/server.js",
   "type": "commonjs",
   "scripts": {
@@ -9,7 +9,7 @@
     "start": "node src/server.js"
   },
   "dependencies": {
-    "express": "^5.1.0",
+    "express": "^4.21.2",
     "peer": "^1.0.2",
     "ws": "^8.14.0"
   }

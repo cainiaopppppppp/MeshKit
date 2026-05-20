@@ -2,7 +2,7 @@
  * useRoom Hook - 房间功能封装
  */
 import { useEffect, useCallback, useState } from 'react';
-import { eventBus, roomManager, fileTransferManager, type Room, type FileMetadata } from '@meshkit/core';
+import { eventBus, roomManager, fileTransferManager, refreshP2PPeer, type Room, type FileMetadata } from '@meshkit/core';
 import { useAppStore } from '../store';
 
 export function useRoom() {
@@ -183,6 +183,20 @@ export function useRoom() {
       setError(error);
     };
 
+    const handleRoomLeft = () => {
+      fileTransferManager.fullReset();
+      resetRoom();
+      setP2pConnected(false);
+      setError(null);
+    };
+
+    const handleRoomDissolved = ({ message }: { message: string }) => {
+      fileTransferManager.fullReset();
+      resetRoom();
+      setP2pConnected(false);
+      setError(message);
+    };
+
     // P2P连接建立
     const handleP2PConnected = ({ peer, direction }: { peer: string; direction: string }) => {
       console.log('[useRoom] P2P connection established:', peer, direction);
@@ -249,7 +263,7 @@ export function useRoom() {
         // 检查是否所有选中的文件都已完成
         const queue = fileTransferManager.getFileQueue();
         const selectedFiles = queue.filter(item => item.selected);
-        const completedFiles = selectedFiles.filter(item => item.status === 'completed');
+        const completedFiles = selectedFiles.filter(item => item.status === 'completed' || !!item.receivedBlob);
 
         console.log('[useRoom] Checking completion:', completedFiles.length, '/', selectedFiles.length);
 
@@ -267,6 +281,8 @@ export function useRoom() {
 
     eventBus.on('room:updated', handleRoomUpdate);
     eventBus.on('room:error', handleRoomError);
+    eventBus.on('room:left', handleRoomLeft);
+    (eventBus as any).on('room:dissolved', handleRoomDissolved);
     eventBus.on('p2p:connection:open', handleP2PConnected);
     eventBus.on('p2p:connection:close', handleP2PDisconnected);
     eventBus.on('room:member-joined', handleMemberJoined);
@@ -279,6 +295,8 @@ export function useRoom() {
     return () => {
       eventBus.off('room:updated', handleRoomUpdate);
       eventBus.off('room:error', handleRoomError);
+      eventBus.off('room:left', handleRoomLeft);
+      (eventBus as any).off('room:dissolved', handleRoomDissolved);
       eventBus.off('p2p:connection:open', handleP2PConnected);
       eventBus.off('p2p:connection:close', handleP2PDisconnected);
       eventBus.off('room:member-joined', handleMemberJoined);
@@ -288,7 +306,7 @@ export function useRoom() {
       eventBus.off('transfer:file-item-started', handleFileItemStarted);
       eventBus.off('transfer:file-item-completed', handleFileItemCompleted);
     };
-  }, [currentRoom, setCurrentRoom, updateRoomMembers, setBroadcastProgress, updateMemberProgress, setP2pConnected]);
+  }, [currentRoom, setCurrentRoom, updateRoomMembers, setBroadcastProgress, updateMemberProgress, resetRoom, setP2pConnected]);
 
   /**
    * 判断是否是房主
@@ -350,6 +368,20 @@ export function useRoom() {
     }
   }, []);
 
+  const refreshRtcConnection = useCallback(async (): Promise<boolean> => {
+    try {
+      setError(null);
+      await refreshP2PPeer();
+      roomManager.reconnectPeerConnection();
+      return true;
+    } catch (err) {
+      const errorMsg = (err as Error).message;
+      console.error('[useRoom] Failed to refresh RTC connection:', errorMsg);
+      setError(errorMsg);
+      return false;
+    }
+  }, []);
+
   return {
     currentRoom,
     isCreating,
@@ -364,5 +396,6 @@ export function useRoom() {
     updateRoomFiles,
     requestFile,
     markAsCompleted,
+    refreshRtcConnection,
   };
 }

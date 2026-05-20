@@ -1,8 +1,8 @@
 /**
- * 便签卡片组件 - 支持拖拽、编辑、调整大小
+ * 便签卡片组件 - 支持拖拽、编辑、缩放和移动端长按拖动
  */
 
-import { useState, useRef, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { StickyNote } from '../types/stickyNote';
 
 interface StickyNoteCardProps {
@@ -13,23 +13,33 @@ interface StickyNoteCardProps {
   canvasScale?: number;
 }
 
-export function StickyNoteCard({ note, onUpdate, onDelete, isReadOnly = false, canvasScale = 1 }: StickyNoteCardProps) {
+const TOUCH_DRAG_HOLD_MS = 180;
+const TOUCH_DRAG_CANCEL_DISTANCE = 10;
+
+export function StickyNoteCard({
+  note,
+  onUpdate,
+  onDelete,
+  isReadOnly = false,
+  canvasScale = 1,
+}: StickyNoteCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [content, setContent] = useState(note.content);
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [resizeStart, setResizeStart] = useState({ width: 0, height: 0, mouseX: 0, mouseY: 0 });
+  const [isTouchHoldActive, setIsTouchHoldActive] = useState(false);
 
   const cardRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const touchDragTimerRef = useRef<number | null>(null);
+  const touchStartPointRef = useRef<{ x: number; y: number } | null>(null);
 
-  // 同步外部 note.content 的变化到本地 state
   useEffect(() => {
     setContent(note.content);
   }, [note.content]);
 
-  // 自动聚焦编辑框
   useEffect(() => {
     if (isEditing && textareaRef.current) {
       textareaRef.current.focus();
@@ -37,17 +47,17 @@ export function StickyNoteCard({ note, onUpdate, onDelete, isReadOnly = false, c
     }
   }, [isEditing]);
 
-  // 点击外部区域自动保存编辑
   useEffect(() => {
-    if (!isEditing) return;
+    if (!isEditing) {
+      return;
+    }
 
-    const handleClickOutside = (e: MouseEvent) => {
-      if (cardRef.current && !cardRef.current.contains(e.target as Node)) {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (cardRef.current && !cardRef.current.contains(event.target as Node)) {
         handleSaveEdit();
       }
     };
 
-    // 延迟添加监听器，避免立即触发
     const timer = setTimeout(() => {
       document.addEventListener('mousedown', handleClickOutside);
     }, 100);
@@ -58,70 +68,142 @@ export function StickyNoteCard({ note, onUpdate, onDelete, isReadOnly = false, c
     };
   }, [isEditing, content]);
 
-  // 开始拖拽 - 鼠标事件
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (isReadOnly || isEditing || isResizing) return;
+  useEffect(() => {
+    return () => {
+      clearTouchDragTimer();
+    };
+  }, []);
 
-    // 忽略在按钮、输入框等交互元素上的点击
-    const target = e.target as HTMLElement;
-    if (target.tagName === 'BUTTON' || target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') {
-      return;
+  const clearTouchDragTimer = () => {
+    if (touchDragTimerRef.current !== null) {
+      window.clearTimeout(touchDragTimerRef.current);
+      touchDragTimerRef.current = null;
     }
-    if (target.classList.contains('resize-handle')) {
-      return;
-    }
+    touchStartPointRef.current = null;
+    setIsTouchHoldActive(false);
+  };
 
-    setIsDragging(true);
+  const isInteractiveTarget = (target: HTMLElement) => {
+    return (
+      target.tagName === 'BUTTON'
+      || target.tagName === 'TEXTAREA'
+      || target.tagName === 'INPUT'
+      || target.closest('button')
+      || target.closest('textarea')
+      || target.closest('input')
+      || target.classList.contains('resize-handle')
+    );
+  };
+
+  const startDragging = (clientX: number, clientY: number) => {
     const rect = cardRef.current?.getBoundingClientRect();
-    if (rect) {
-      setDragOffset({
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
-      });
+    if (!rect) {
+      return;
+    }
+
+    setDragOffset({
+      x: clientX - rect.left,
+      y: clientY - rect.top,
+    });
+    setIsDragging(true);
+    setIsTouchHoldActive(false);
+  };
+
+  const handleMouseDown = (event: React.MouseEvent) => {
+    if (isReadOnly || isEditing || isResizing) {
+      return;
+    }
+
+    const target = event.target as HTMLElement;
+    if (isInteractiveTarget(target)) {
+      return;
+    }
+
+    startDragging(event.clientX, event.clientY);
+  };
+
+  const handleTouchStart = (event: React.TouchEvent) => {
+    if (isReadOnly || isEditing || isResizing) {
+      return;
+    }
+
+    const target = event.target as HTMLElement;
+    if (isInteractiveTarget(target)) {
+      return;
+    }
+
+    const touch = event.touches[0];
+    if (!touch) {
+      return;
+    }
+
+    clearTouchDragTimer();
+    touchStartPointRef.current = { x: touch.clientX, y: touch.clientY };
+    setIsTouchHoldActive(true);
+
+    touchDragTimerRef.current = window.setTimeout(() => {
+      if (!touchStartPointRef.current) {
+        return;
+      }
+
+      startDragging(touchStartPointRef.current.x, touchStartPointRef.current.y);
+      touchStartPointRef.current = null;
+      touchDragTimerRef.current = null;
+    }, TOUCH_DRAG_HOLD_MS);
+  };
+
+  const handleTouchMove = (event: React.TouchEvent) => {
+    if (!touchStartPointRef.current || isDragging) {
+      return;
+    }
+
+    const touch = event.touches[0];
+    if (!touch) {
+      return;
+    }
+
+    const deltaX = touch.clientX - touchStartPointRef.current.x;
+    const deltaY = touch.clientY - touchStartPointRef.current.y;
+    const distance = Math.hypot(deltaX, deltaY);
+
+    if (distance > TOUCH_DRAG_CANCEL_DISTANCE) {
+      clearTouchDragTimer();
     }
   };
 
-  // 开始拖拽 - 触摸事件
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (isReadOnly || isEditing || isResizing) return;
-
-    const target = e.target as HTMLElement;
-    if (target.tagName === 'BUTTON' || target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') {
-      return;
-    }
-    if (target.classList.contains('resize-handle')) {
-      return;
-    }
-
-    const touch = e.touches[0];
-    setIsDragging(true);
-    const rect = cardRef.current?.getBoundingClientRect();
-    if (rect) {
-      setDragOffset({
-        x: touch.clientX - rect.left,
-        y: touch.clientY - rect.top,
-      });
+  const handleTouchEnd = () => {
+    if (!isDragging) {
+      clearTouchDragTimer();
     }
   };
 
-  // 开始调整大小 - 鼠标事件
-  const handleResizeStart = (e: React.MouseEvent) => {
-    if (isReadOnly) return;
-    e.stopPropagation();
+  const handleResizeStart = (event: React.MouseEvent) => {
+    if (isReadOnly) {
+      return;
+    }
+
+    event.stopPropagation();
     setIsResizing(true);
     setResizeStart({
       width: note.size.width,
       height: note.size.height,
-      mouseX: e.clientX,
-      mouseY: e.clientY,
+      mouseX: event.clientX,
+      mouseY: event.clientY,
     });
   };
 
-  // 开始调整大小 - 触摸事件
-  const handleResizeTouchStart = (e: React.TouchEvent) => {
-    if (isReadOnly) return;
-    e.stopPropagation();
-    const touch = e.touches[0];
+  const handleResizeTouchStart = (event: React.TouchEvent) => {
+    if (isReadOnly) {
+      return;
+    }
+
+    event.stopPropagation();
+    const touch = event.touches[0];
+    if (!touch) {
+      return;
+    }
+
+    clearTouchDragTimer();
     setIsResizing(true);
     setResizeStart({
       width: note.size.width,
@@ -131,99 +213,118 @@ export function StickyNoteCard({ note, onUpdate, onDelete, isReadOnly = false, c
     });
   };
 
-  // 处理移动（拖拽和调整大小）- 支持鼠标和触摸
   useEffect(() => {
     const handleMove = (clientX: number, clientY: number) => {
       if (isDragging) {
         const container = cardRef.current?.parentElement;
-        if (!container) return;
+        if (!container) {
+          return;
+        }
 
         const containerRect = container.getBoundingClientRect();
-
-        // 将屏幕坐标转换为逻辑坐标（考虑画布缩放）
         const screenX = clientX - containerRect.left - dragOffset.x;
         const screenY = clientY - containerRect.top - dragOffset.y;
-        const newX = screenX / canvasScale;
-        const newY = screenY / canvasScale;
 
-        // 不限制边界，允许便签移动到画布的任何位置
         onUpdate(note.id, {
           position: {
-            x: newX,
-            y: newY,
+            x: screenX / canvasScale,
+            y: screenY / canvasScale,
           },
         });
-      } else if (isResizing) {
-        // 调整大小时也要考虑缩放
+        return;
+      }
+
+      if (isResizing) {
         const deltaX = (clientX - resizeStart.mouseX) / canvasScale;
         const deltaY = (clientY - resizeStart.mouseY) / canvasScale;
 
-        const newWidth = Math.max(200, resizeStart.width + deltaX);
-        const newHeight = Math.max(150, resizeStart.height + deltaY);
-
         onUpdate(note.id, {
-          size: { width: newWidth, height: newHeight },
+          size: {
+            width: Math.max(220, resizeStart.width + deltaX),
+            height: Math.max(160, resizeStart.height + deltaY),
+          },
         });
       }
     };
 
-    const handleMouseMove = (e: MouseEvent) => {
-      handleMove(e.clientX, e.clientY);
+    const handleMouseMove = (event: MouseEvent) => {
+      handleMove(event.clientX, event.clientY);
     };
 
-    const handleTouchMove = (e: TouchEvent) => {
-      if (e.touches.length > 0) {
-        const touch = e.touches[0];
-        handleMove(touch.clientX, touch.clientY);
+    const handleTouchMove = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (!touch) {
+        return;
       }
+
+      if (isDragging || isResizing) {
+        event.preventDefault();
+      }
+
+      handleMove(touch.clientX, touch.clientY);
     };
 
     const handleEnd = () => {
       setIsDragging(false);
       setIsResizing(false);
+      clearTouchDragTimer();
     };
 
-    if (isDragging || isResizing) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleEnd);
-      document.addEventListener('touchmove', handleTouchMove, { passive: false });
-      document.addEventListener('touchend', handleEnd);
-
-      return () => {
-        document.removeEventListener('mousemove', handleMouseMove);
-        document.removeEventListener('mouseup', handleEnd);
-        document.removeEventListener('touchmove', handleTouchMove);
-        document.removeEventListener('touchend', handleEnd);
-      };
+    if (!isDragging && !isResizing) {
+      return;
     }
-  }, [isDragging, isResizing, dragOffset, resizeStart, note.id, note.size, onUpdate]);
 
-  // 保存编辑
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleEnd);
+    document.addEventListener('touchmove', handleTouchMove, { passive: false });
+    document.addEventListener('touchend', handleEnd);
+    document.addEventListener('touchcancel', handleEnd);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleEnd);
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('touchend', handleEnd);
+      document.removeEventListener('touchcancel', handleEnd);
+    };
+  }, [canvasScale, dragOffset.x, dragOffset.y, isDragging, isResizing, note.id, onUpdate, resizeStart]);
+
   const handleSaveEdit = () => {
-    const trimmedContent = content.trim();
-    // 总是更新，即使内容相同，确保触发同步
-    onUpdate(note.id, { content: trimmedContent });
+    onUpdate(note.id, { content: content.trim() });
     setIsEditing(false);
   };
 
-  // 取消编辑
   const handleCancelEdit = () => {
     setContent(note.content);
     setIsEditing(false);
   };
 
-  // 删除便签
   const handleDelete = () => {
-    if (confirm('确定要删除这个便签吗？')) {
+    if (confirm('确定要删除这张便签吗？')) {
       onDelete(note.id);
+    }
+  };
+
+  const handleCopy = async () => {
+    if (!note.content.trim()) {
+      alert('这张便签还是空白的');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(note.content);
+      alert('便签内容已复制');
+    } catch (error) {
+      console.warn('[StickyNoteCard] Clipboard copy failed:', error);
+      window.prompt('请手动复制以下内容', note.content);
     }
   };
 
   return (
     <div
       ref={cardRef}
-      className={`sticky-note-card absolute shadow-lg rounded-lg overflow-hidden touch-none ${
-        isDragging ? 'cursor-grabbing opacity-80 z-50' : 'cursor-grab'
+      className={`sticky-note-card absolute overflow-hidden rounded-[18px] border border-black/5 shadow-[0_18px_34px_rgba(15,23,42,0.16)] ${
+        isDragging ? 'z-50 cursor-grabbing opacity-90' : 'cursor-grab'
       } ${isResizing ? 'select-none' : ''}`}
       style={{
         left: note.position.x,
@@ -234,139 +335,131 @@ export function StickyNoteCard({ note, onUpdate, onDelete, isReadOnly = false, c
       }}
       onMouseDown={handleMouseDown}
       onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
     >
-      {/* 头部 */}
-      <div className="px-3 py-2 bg-black bg-opacity-10 flex items-center justify-between">
-        <div className="text-xs text-gray-700 font-medium truncate">
-          {new Date(note.createdAt).toLocaleString()}
-        </div>
-        {!isReadOnly && (
-          <div className="flex gap-1">
-            {!isEditing && (
-              <>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    // 复制便签内容
-                    if (navigator.clipboard && navigator.clipboard.writeText) {
-                      navigator.clipboard.writeText(note.content).then(() => {
-                        alert('便签内容已复制');
-                      }).catch(() => {
-                        alert(`内容：${note.content}`);
-                      });
-                    } else {
-                      // 降级方案
-                      const textarea = document.createElement('textarea');
-                      textarea.value = note.content;
-                      textarea.style.position = 'fixed';
-                      textarea.style.opacity = '0';
-                      document.body.appendChild(textarea);
-                      textarea.select();
-                      try {
-                        document.execCommand('copy');
-                        alert('便签内容已复制');
-                      } catch (err) {
-                        alert(`内容：${note.content}`);
-                      } finally {
-                        if (textarea.parentNode === document.body) {
-                          document.body.removeChild(textarea);
-                        }
-                      }
-                    }
-                  }}
-                  className="px-3 py-1.5 text-xs bg-white bg-opacity-50 hover:bg-opacity-80 rounded touch-manipulation min-h-[32px]"
-                  title="复制内容"
-                >
-                  复制
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsEditing(true);
-                  }}
-                  className="px-3 py-1.5 text-xs bg-white bg-opacity-50 hover:bg-opacity-80 rounded touch-manipulation min-h-[32px]"
-                >
-                  编辑
-                </button>
-              </>
-            )}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDelete();
-              }}
-              className="px-3 py-1.5 text-xs bg-red-500 bg-opacity-50 hover:bg-opacity-80 text-white rounded touch-manipulation min-h-[32px]"
-            >
-              删除
-            </button>
+      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.42),rgba(255,255,255,0.18))]" />
+      <div className="relative flex h-full flex-col backdrop-blur-[0.5px]">
+        <div className="flex items-center justify-between gap-2 border-b border-black/5 bg-white/35 px-3 py-2">
+          <div className="truncate text-[11px] font-medium text-slate-700">
+            {new Date(note.updatedAt || note.createdAt).toLocaleString()}
           </div>
-        )}
-      </div>
-
-      {/* 内容区域 */}
-      <div className="p-3 overflow-hidden" style={{ height: 'calc(100% - 48px)' }}>
-        {isEditing ? (
-          <div className="h-full flex flex-col gap-2">
-            <textarea
-              ref={textareaRef}
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              onKeyDown={(e) => {
-                // Ctrl/Cmd + Enter 保存
-                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                  e.preventDefault();
-                  handleSaveEdit();
-                }
-                // Esc 取消
-                if (e.key === 'Escape') {
-                  e.preventDefault();
-                  handleCancelEdit();
-                }
-              }}
-              className="flex-1 w-full p-2 border border-gray-300 rounded resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 overflow-y-auto"
-              placeholder="输入内容... (Ctrl+Enter 保存，Esc 取消)"
-              onClick={(e) => e.stopPropagation()}
-              onMouseDown={(e) => e.stopPropagation()}
-            />
-            <div className="flex gap-2 flex-shrink-0">
+          {!isReadOnly && (
+            <div className="flex items-center gap-1.5">
+              {!isEditing && (
+                <>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void handleCopy();
+                    }}
+                    className="rounded-full border border-white/80 bg-white/70 px-2.5 py-1 text-[11px] font-medium text-slate-700 shadow-sm transition hover:bg-white"
+                    title="复制便签"
+                  >
+                    复制
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setIsEditing(true);
+                    }}
+                    className="rounded-full border border-white/80 bg-white/70 px-2.5 py-1 text-[11px] font-medium text-slate-700 shadow-sm transition hover:bg-white"
+                    title="编辑便签"
+                  >
+                    编辑
+                  </button>
+                </>
+              )}
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleSaveEdit();
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  handleDelete();
                 }}
-                className="flex-1 px-3 py-2 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 touch-manipulation min-h-[40px]"
+                className="rounded-full border border-rose-200 bg-rose-500/90 px-2.5 py-1 text-[11px] font-medium text-white shadow-sm transition hover:bg-rose-600"
+                title="删除便签"
               >
-                保存
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleCancelEdit();
-                }}
-                className="flex-1 px-3 py-2 bg-gray-300 text-gray-700 text-sm rounded hover:bg-gray-400 touch-manipulation min-h-[40px]"
-              >
-                取消
+                删除
               </button>
             </div>
+          )}
+        </div>
+
+        <div className="relative flex-1 px-3 py-3">
+          {isEditing ? (
+            <div className="flex h-full flex-col gap-2">
+              <textarea
+                ref={textareaRef}
+                value={content}
+                onChange={(event) => setContent(event.target.value)}
+                onKeyDown={(event) => {
+                  if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                    event.preventDefault();
+                    handleSaveEdit();
+                  }
+
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    handleCancelEdit();
+                  }
+                }}
+                className="w-full flex-1 resize-none rounded-[14px] border border-white/80 bg-white/80 px-3 py-2 text-sm text-slate-700 outline-none ring-0 backdrop-blur focus:border-sky-300"
+                placeholder="输入内容... (Ctrl/Cmd + Enter 保存)"
+                onClick={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleSaveEdit();
+                  }}
+                  className="flex-1 rounded-[12px] bg-sky-600 px-3 py-2 text-sm font-medium text-white shadow-[0_8px_18px_rgba(14,165,233,0.24)] transition hover:bg-sky-700"
+                >
+                  保存
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleCancelEdit();
+                  }}
+                  className="flex-1 rounded-[12px] border border-slate-200 bg-white/80 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-white"
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="h-full overflow-y-auto whitespace-pre-wrap break-words pr-2 text-sm leading-6 text-slate-800">
+              {note.content || '空白便签'}
+            </div>
+          )}
+        </div>
+
+        <div className="pointer-events-none absolute bottom-0 right-0 h-8 w-8 rounded-tl-[14px] bg-white/45 shadow-[-4px_-4px_10px_rgba(255,255,255,0.35)] [clip-path:polygon(100%_0,0_100%,100%_100%)]" />
+
+        {!isReadOnly && !isEditing && (
+          <div
+            className="resize-handle absolute bottom-1 right-1 h-8 w-8 cursor-nwse-resize rounded-full border border-white/60 bg-white/45 shadow-sm backdrop-blur"
+            onMouseDown={handleResizeStart}
+            onTouchStart={handleResizeTouchStart}
+            title="拖动调整大小"
+          >
+            <span className="pointer-events-none absolute bottom-1.5 right-1.5 h-3 w-3 rounded-sm border-r-2 border-b-2 border-slate-400" />
           </div>
-        ) : (
-          <div className="whitespace-pre-wrap break-words text-gray-800 h-full overflow-y-auto">
-            {note.content || '空白便签'}
+        )}
+
+        {isTouchHoldActive && !isDragging && !isEditing && (
+          <div className="pointer-events-none absolute inset-x-4 bottom-4 rounded-full bg-slate-900/70 px-3 py-1 text-center text-[11px] text-white shadow-lg">
+            长按后拖动便签
           </div>
         )}
       </div>
-
-      {/* 调整大小手柄 */}
-      {!isReadOnly && !isEditing && (
-        <div
-          className="resize-handle absolute bottom-0 right-0 w-8 h-8 cursor-nwse-resize touch-none"
-          onMouseDown={handleResizeStart}
-          onTouchStart={handleResizeTouchStart}
-          style={{
-            background: 'linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.2) 50%)',
-          }}
-        />
-      )}
     </div>
   );
 }

@@ -66,7 +66,7 @@ export interface Room {
   fileInfo?: FileMetadata; // 待传输的文件信息（单文件模式）
   fileList?: FileMetadata[]; // 待传输的文件列表（多文件模式）
   isMultiFile?: boolean; // 是否为多文件模式
-  status: 'waiting' | 'transferring' | 'completed';
+  status: 'waiting' | 'transferring' | 'completed' | 'dissolved';
   hasPassword?: boolean; // 是否有密码保护（服务器告知客户端，但不传输真实密码）
 }
 
@@ -143,7 +143,7 @@ export interface SignalingMessage {
 }
 
 export interface ChunkData {
-  type: 'metadata' | 'chunk' | 'complete' | 'ack' | 'file-list' | 'file-selection' | 'start-file' | 'queue-complete' | 'password-verify' | 'password-rejected' | 'transfer-rejected' | 'receiver-ready' | 'file-list-rejected';
+  type: 'metadata' | 'chunk' | 'complete' | 'ack' | 'file-list' | 'file-selection' | 'start-file' | 'queue-complete' | 'receiver-complete' | 'password-verify' | 'password-rejected' | 'transfer-rejected' | 'transfer-cancelled' | 'receiver-ready' | 'file-list-rejected';
   name?: string;
   size?: number;
   mimeType?: string;
@@ -218,11 +218,12 @@ export interface EventMap {
   'transfer:broadcast-progress': { memberProgress: Record<string, number>; avgProgress: number };
   'transfer:completed': { direction: TransferDirection; duration: number; avgSpeed: number };
   'transfer:error': { error: Error; direction: TransferDirection };
-  'transfer:cancelled': { direction: TransferDirection };
+  'transfer:cancelled': { direction: TransferDirection; message?: string };
   'transfer:rejected': { direction: TransferDirection; message?: string };
   'transfer:downloaded': { filename: string; size: number };
   'transfer:download-blocked': { reason: string };
   'transfer:download-started': { filename: string; streaming: boolean };
+  'transfer:receiver-completed': { direction: TransferDirection };
 
   // 文件队列事件
   'transfer:queue-updated': { queue: FileQueueItem[]; direction: 'send' | 'receive' | null };
@@ -245,6 +246,7 @@ export interface EventMap {
   'room:created': { room: Room };
   'room:joined': { room: Room };
   'room:left': void;
+  'room:dissolved': { room: Room; message: string; initiatedByHost: boolean };
   'room:updated': { room: Room };
   'room:member-joined': { member: RoomMember };
   'room:member-left': { deviceId: string };

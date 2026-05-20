@@ -7,6 +7,7 @@ import { WebrtcProvider } from 'y-webrtc';
 import { config as appConfig } from '@meshkit/core';
 import type { StickyNote, UserInfo, RoomConfig } from '../types/stickyNote';
 import { encryptionHelper, type EncryptionMethod } from '../utils/Encryption';
+import { notesStorage } from '../utils/NotesStorage';
 
 export class StickyNotesRoom {
   private ydoc: Y.Doc | null = null;
@@ -15,6 +16,7 @@ export class StickyNotesRoom {
   private yUsers: Y.Map<any> | null = null;
   private yMeta: Y.Map<any> | null = null; // 房间元数据
   private roomId: string = '';
+  private roomCreatedAt: number | null = null;
   private userId: string = '';
   private userName: string = '';
   private userColor: string = '';
@@ -23,9 +25,13 @@ export class StickyNotesRoom {
   private encryptionMethod: EncryptionMethod = 'AES-256-CBC';
   private isPasswordVerified: boolean = false;
   private expirationCheckInterval: NodeJS.Timeout | null = null;
+  private presenceHeartbeatInterval: NodeJS.Timeout | null = null;
+  private hasHandledDestroyedRoom: boolean = false;
 
   // 房间有效期配置（24小时，单位：毫秒）
   private static readonly ROOM_EXPIRATION_TIME = 24 * 60 * 60 * 1000;
+  private static readonly USER_HEARTBEAT_INTERVAL = 10000;
+  private static readonly USER_STALE_TIME = 30000;
 
   // 回调函数
   private onNotesChange?: (notes: StickyNote[]) => void;
@@ -33,6 +39,9 @@ export class StickyNotesRoom {
   private onConnectionChange?: (connected: boolean, peerCount: number) => void;
   private onRoomDestroyed?: () => void;
   private onRoomExpiring?: (remainingTime: number) => void;
+  private readonly handlePageLifecycleExit = () => {
+    this.removeLocalUserPresence();
+  };
 
   /**
    * 创建或加入房间
@@ -48,6 +57,11 @@ export class StickyNotesRoom {
     this.password = config.password || '';
     this.enableEncryption = config.enableEncryption;
     this.encryptionMethod = config.encryptionMethod || 'AES-256-CBC';
+    this.hasHandledDestroyedRoom = false;
+
+    if (notesStorage.isRoomDestroyed(this.roomId)) {
+      throw new Error('这个房间已被销毁，无法再次进入。');
+    }
 
     // 生成用户信息
     this.userId = this.generateUserId();
@@ -123,23 +137,50 @@ export class StickyNotesRoom {
       }, 500);
     });
 
+    const existingDestroyedAt = this.yMeta.get('destroyedAt');
+    if (this.yMeta.get('destroyed')) {
+      notesStorage.markRoomDestroyed(
+        this.roomId,
+        typeof existingDestroyedAt === 'number' ? existingDestroyedAt : Date.now(),
+      );
+      await this.leaveRoom();
+      throw new Error('这个房间已被销毁，无法再次进入。');
+    }
+
     // 处理加密房间的密码验证（在添加用户之前）
     // 必须先检查房间是否已是加密房间
     await this.handlePasswordVerification();
 
     // 密码验证通过后，添加当前用户
-    this.yUsers.set(this.userId, {
-      id: this.userId,
-      name: this.userName,
-      color: this.userColor,
-    });
+    this.cleanupStaleUsers();
+    this.updateLocalUserPresence();
+    this.startPresenceHeartbeat();
+    this.bindPageLifecycle();
+    this.handleUsersChange();
+    this.emitConnectionState();
 
     // 监听房间元数据变化
     this.yMeta.observe(() => {
-      const isDestroyed = this.yMeta?.get('destroyed');
-      if (isDestroyed && this.onRoomDestroyed) {
-        this.onRoomDestroyed();
+      const nextCreatedAt = this.yMeta?.get('createdAt');
+      if (typeof nextCreatedAt === 'number') {
+        this.roomCreatedAt = nextCreatedAt;
       }
+
+      const isDestroyed = this.yMeta?.get('destroyed');
+      if (isDestroyed && !this.hasHandledDestroyedRoom) {
+        this.hasHandledDestroyedRoom = true;
+        const destroyedAt = this.yMeta?.get('destroyedAt');
+        notesStorage.markRoomDestroyed(
+          this.roomId,
+          typeof destroyedAt === 'number' ? destroyedAt : Date.now(),
+        );
+        void this.clearLocalRoomData();
+        if (this.onRoomDestroyed) {
+          this.onRoomDestroyed();
+        }
+      }
+
+      this.checkRoomExpiration();
     });
 
     // 监听便签变化
@@ -155,21 +196,12 @@ export class StickyNotesRoom {
     // 监听连接状态
     this.provider.on('status', (event: any) => {
       console.log('[StickyNotesRoom] Connection status:', event);
-      if (this.onConnectionChange) {
-        this.onConnectionChange(
-          event.status === 'connected',
-          this.provider?.room?.webrtcConns?.size || 0
-        );
-      }
+      this.emitConnectionState(event.status === 'connected');
     });
 
     this.provider.on('peers', (event: any) => {
       console.log('[StickyNotesRoom] Peers changed:', event);
-      if (this.onConnectionChange) {
-        // peers 数量 = WebRTC 连接数 + 1 (自己)
-        const peerCount = (this.provider?.room?.webrtcConns?.size || 0) + 1;
-        this.onConnectionChange(true, peerCount);
-      }
+      this.emitConnectionState(true);
     });
 
     // 从本地加载便签
@@ -177,6 +209,7 @@ export class StickyNotesRoom {
 
     // 初始化房间过期检查
     await this.initializeRoomExpiration();
+    await this.saveToLocal();
 
     console.log('[StickyNotesRoom] Joined room:', this.roomId);
   }
@@ -186,9 +219,8 @@ export class StickyNotesRoom {
    */
   async leaveRoom() {
     // 移除当前用户
-    if (this.yUsers && this.userId) {
-      this.yUsers.delete(this.userId);
-    }
+    this.removeLocalUserPresence();
+    this.unbindPageLifecycle();
 
     // 保存到本地
     await this.saveToLocal();
@@ -197,6 +229,11 @@ export class StickyNotesRoom {
     if (this.expirationCheckInterval) {
       clearInterval(this.expirationCheckInterval);
       this.expirationCheckInterval = null;
+    }
+
+    if (this.presenceHeartbeatInterval) {
+      clearInterval(this.presenceHeartbeatInterval);
+      this.presenceHeartbeatInterval = null;
     }
 
     // 销毁连接
@@ -360,13 +397,23 @@ export class StickyNotesRoom {
 
     // 检查房间是否已有创建时间
     const existingCreatedAt = this.yMeta.get('createdAt');
+    const existingOwnerUserId = this.yMeta.get('ownerUserId');
+    const existingOwnerName = this.yMeta.get('ownerName');
 
-    if (!existingCreatedAt) {
+    if (typeof existingCreatedAt !== 'number') {
       // 新房间，记录创建时间
-      const now = Date.now();
-      this.yMeta.set('createdAt', now);
-      console.log('[StickyNotesRoom] Room created at:', new Date(now).toISOString());
+      const resolvedCreatedAt = await this.resolveRoomCreatedAt();
+      this.yMeta.set('createdAt', resolvedCreatedAt);
+      if (typeof existingOwnerUserId !== 'string') {
+        this.yMeta.set('ownerUserId', this.userId);
+      }
+      if (typeof existingOwnerName !== 'string') {
+        this.yMeta.set('ownerName', this.userName);
+      }
+      this.roomCreatedAt = resolvedCreatedAt;
+      console.log('[StickyNotesRoom] Room created at:', new Date(resolvedCreatedAt).toISOString());
     } else {
+      this.roomCreatedAt = existingCreatedAt;
       console.log('[StickyNotesRoom] Existing room created at:', new Date(existingCreatedAt).toISOString());
     }
 
@@ -385,8 +432,8 @@ export class StickyNotesRoom {
   private checkRoomExpiration() {
     if (!this.yMeta) return;
 
-    const createdAt = this.yMeta.get('createdAt');
-    if (!createdAt) return;
+    const createdAt = this.getRoomCreatedAt();
+    if (typeof createdAt !== 'number') return;
 
     const now = Date.now();
     const elapsed = now - createdAt;
@@ -412,6 +459,11 @@ export class StickyNotesRoom {
    */
   async destroyRoom(verifyPassword?: string) {
     if (!this.yNotes || !this.yMeta || !this.ydoc) return;
+
+    const ownerUserId = this.yMeta.get('ownerUserId');
+    if (typeof ownerUserId === 'string' && ownerUserId !== this.userId) {
+      throw new Error('只有房主可以销毁这个房间');
+    }
 
     // 检查是否是加密房间
     const existingToken = this.yMeta.get('passwordVerificationToken');
@@ -450,6 +502,10 @@ export class StickyNotesRoom {
       this.yMeta!.set('destroyed', true);
       this.yMeta!.set('destroyedAt', Date.now());
     });
+
+    this.hasHandledDestroyedRoom = true;
+    notesStorage.markRoomDestroyed(this.roomId);
+    await this.clearLocalRoomData();
   }
 
   /**
@@ -477,9 +533,12 @@ export class StickyNotesRoom {
   getAllUsers(): UserInfo[] {
     if (!this.yUsers) return [];
 
+    const now = Date.now();
     const users: UserInfo[] = [];
     this.yUsers.forEach((user) => {
-      users.push(user);
+      if (!user?.lastSeen || now - user.lastSeen <= StickyNotesRoom.USER_STALE_TIME) {
+        users.push(user);
+      }
     });
 
     return users;
@@ -545,10 +604,93 @@ export class StickyNotesRoom {
    * 处理用户变化
    */
   private handleUsersChange() {
+    this.cleanupStaleUsers();
+
     if (this.onUsersChange) {
       const users = this.getAllUsers();
       this.onUsersChange(users);
     }
+
+    this.emitConnectionState();
+  }
+
+  private startPresenceHeartbeat() {
+    if (this.presenceHeartbeatInterval) {
+      clearInterval(this.presenceHeartbeatInterval);
+    }
+
+    this.presenceHeartbeatInterval = setInterval(() => {
+      this.updateLocalUserPresence();
+      this.cleanupStaleUsers();
+    }, StickyNotesRoom.USER_HEARTBEAT_INTERVAL);
+  }
+
+  private updateLocalUserPresence() {
+    if (!this.yUsers || !this.userId) return;
+
+    this.yUsers.set(this.userId, {
+      id: this.userId,
+      name: this.userName,
+      color: this.userColor,
+      lastSeen: Date.now(),
+    });
+  }
+
+  private removeLocalUserPresence() {
+    if (!this.yUsers || !this.userId) return;
+
+    this.yUsers.delete(this.userId);
+  }
+
+  private emitConnectionState(forceConnected?: boolean) {
+    if (!this.onConnectionChange) {
+      return;
+    }
+
+    const totalUsers = Math.max(this.getAllUsers().length, this.userId ? 1 : 0);
+    const hasRealtimePeers = (this.provider?.room?.webrtcConns?.size || 0) > 0;
+    const connected = (forceConnected ?? hasRealtimePeers) || totalUsers > 1;
+
+    this.onConnectionChange(connected, totalUsers);
+  }
+
+  private bindPageLifecycle() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.addEventListener('pagehide', this.handlePageLifecycleExit);
+    window.addEventListener('beforeunload', this.handlePageLifecycleExit);
+  }
+
+  private unbindPageLifecycle() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.removeEventListener('pagehide', this.handlePageLifecycleExit);
+    window.removeEventListener('beforeunload', this.handlePageLifecycleExit);
+  }
+
+  private cleanupStaleUsers() {
+    if (!this.yUsers) return;
+
+    const now = Date.now();
+    const staleUserIds: string[] = [];
+
+    this.yUsers.forEach((user, id) => {
+      if (!user?.lastSeen) {
+        return;
+      }
+
+      if (now - user.lastSeen > StickyNotesRoom.USER_STALE_TIME) {
+        staleUserIds.push(id);
+      }
+    });
+
+    staleUserIds.forEach((id) => {
+      this.yUsers?.delete(id);
+    });
   }
 
   /**
@@ -557,7 +699,19 @@ export class StickyNotesRoom {
    * Yjs 会自动管理文档状态并通过 WebRTC 同步
    */
   private async loadLocalNotes() {
-    // 不加载本地便签，完全依赖 Yjs 的 P2P 同步
+    if (!this.yNotes || this.yNotes.size > 0) {
+      return;
+    }
+
+    const localNotes = await notesStorage.getNotesByRoom(this.roomId);
+    if (localNotes.length === 0) {
+      return;
+    }
+
+    localNotes.forEach((note) => {
+      const { roomId: _roomId, ...nextNote } = note;
+      this.yNotes?.set(note.id, nextNote);
+    });
   }
 
   /**
@@ -566,14 +720,81 @@ export class StickyNotesRoom {
    * Yjs 会处理文档的持久化
    */
   private async saveToLocal() {
-    // 不保存到本地，完全依赖 Yjs 的 P2P 同步
+    if (!this.roomId || !this.yNotes) {
+      return;
+    }
+
+    if (this.yMeta?.get('destroyed')) {
+      const destroyedAt = this.yMeta.get('destroyedAt');
+      notesStorage.markRoomDestroyed(
+        this.roomId,
+        typeof destroyedAt === 'number' ? destroyedAt : Date.now(),
+      );
+      await this.clearLocalRoomData();
+      return;
+    }
+
+    const createdAt = this.getRoomCreatedAt() ?? await this.resolveRoomCreatedAt();
+    const notes = await this.getAllNotes();
+    const ownerUserId = this.yMeta?.get('ownerUserId');
+    const ownerName = this.yMeta?.get('ownerName');
+
+    await notesStorage.saveRoom({
+      id: this.roomId,
+      name: this.roomId,
+      isEncrypted: this.enableEncryption,
+      encryptionMethod: this.enableEncryption ? this.encryptionMethod : undefined,
+      ownerUserId: typeof ownerUserId === 'string' ? ownerUserId : undefined,
+      ownerName: typeof ownerName === 'string' ? ownerName : undefined,
+      lastUserName: this.userName || undefined,
+      savedPassword: this.password || undefined,
+      isOwner: typeof ownerUserId === 'string' ? ownerUserId === this.userId : false,
+      createdAt,
+      lastAccessed: Date.now(),
+      expiresAt: createdAt + StickyNotesRoom.ROOM_EXPIRATION_TIME,
+      noteCount: notes.length,
+    });
+
+    await notesStorage.clearRoomNotes(this.roomId);
+
+    for (const note of notes) {
+      await notesStorage.saveNote({
+        ...note,
+        roomId: this.roomId,
+      });
+    }
+  }
+
+  private async clearLocalRoomData() {
+    if (!this.roomId) {
+      return;
+    }
+
+    await notesStorage.clearRoomNotes(this.roomId);
+    await notesStorage.deleteRoom(this.roomId);
   }
 
   /**
    * 生成用户 ID
    */
   private generateUserId(): string {
-    return `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const storageKey = 'sticky_notes_session_user_id';
+
+    try {
+      const existingId = sessionStorage.getItem(storageKey);
+
+      if (existingId) {
+        return existingId;
+      }
+
+      const nextId = `user_${Math.random().toString(36).slice(2, 11)}`;
+      sessionStorage.setItem(storageKey, nextId);
+      localStorage.removeItem('sticky_notes_user_id');
+      return nextId;
+    } catch (error) {
+      console.warn('[StickyNotesRoom] Failed to access sessionStorage for user id:', error);
+      return `user_${Math.random().toString(36).slice(2, 11)}`;
+    }
   }
 
   /**
@@ -604,11 +825,7 @@ export class StickyNotesRoom {
     localStorage.setItem('sticky_notes_user_name', newName);
 
     // 更新 Yjs 中的用户信息
-    this.yUsers.set(this.userId, {
-      id: this.userId,
-      name: this.userName,
-      color: this.userColor,
-    });
+    this.updateLocalUserPresence();
   }
 
   /**
@@ -622,15 +839,62 @@ export class StickyNotesRoom {
    * 获取房间信息
    */
   getRoomInfo() {
+    const createdAt = this.getRoomCreatedAt() ?? Date.now();
+    const ownerUserId = this.yMeta?.get('ownerUserId');
+    const ownerName = this.yMeta?.get('ownerName');
+
     return {
       roomId: this.roomId,
       userId: this.userId,
       userName: this.userName,
       userColor: this.userColor,
+      ownerUserId: typeof ownerUserId === 'string' ? ownerUserId : undefined,
+      ownerName: typeof ownerName === 'string' ? ownerName : undefined,
+      isOwner: typeof ownerUserId === 'string' ? ownerUserId === this.userId : false,
       isEncrypted: this.enableEncryption,
       encryptionMethod: this.encryptionMethod,
       isExistingEncryptedRoom: !!(this.yMeta?.get('passwordVerificationToken')),
       peerCount: this.provider?.room?.webrtcConns?.size || 0,
+      createdAt,
+      expiresAt: createdAt + StickyNotesRoom.ROOM_EXPIRATION_TIME,
     };
+  }
+
+  private getRoomCreatedAt(): number | null {
+    const currentCreatedAt = this.yMeta?.get('createdAt');
+
+    if (typeof currentCreatedAt === 'number') {
+      this.roomCreatedAt = currentCreatedAt;
+      return currentCreatedAt;
+    }
+
+    return this.roomCreatedAt;
+  }
+
+  private async resolveRoomCreatedAt(): Promise<number> {
+    const existingCreatedAt = this.getRoomCreatedAt();
+    if (typeof existingCreatedAt === 'number') {
+      return existingCreatedAt;
+    }
+
+    const localRoom = await notesStorage.getRoom(this.roomId);
+    if (typeof localRoom?.createdAt === 'number') {
+      this.roomCreatedAt = localRoom.createdAt;
+      return localRoom.createdAt;
+    }
+
+    const hasOtherPeers = (this.provider?.room?.webrtcConns?.size || 0) > 0;
+    if (hasOtherPeers) {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+
+      const syncedCreatedAt = this.getRoomCreatedAt();
+      if (typeof syncedCreatedAt === 'number') {
+        return syncedCreatedAt;
+      }
+    }
+
+    const now = Date.now();
+    this.roomCreatedAt = now;
+    return now;
   }
 }

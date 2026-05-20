@@ -190,7 +190,7 @@ export function getDisplayDeviceName(deviceName?: string): string {
   }
 
   const stripped = normalized
-    .replace(/^[\u{1F4F1}\u{1F4BB}]\s*/u, '')
+    .replace(/^[📱💻]\s*/u, '')
     .replace(/^(手机|电脑)[-_ ]*/u, '')
     .trim();
 

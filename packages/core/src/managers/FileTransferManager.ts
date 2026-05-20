@@ -40,7 +40,7 @@ export class FileTransferManager {
   // 发送状态（点对点模式）
   private sendConnection: DataConnection | null = null;
   private sendProgress: number = 0;
-  private pendingAcks: Map<number, (value: void) => void> = new Map(); // 等待ACK的Promise resolvers
+  private pendingAcks: Map<string, (value: void) => void> = new Map(); // 等待ACK的Promise resolvers
   private lastAckedIndex: number = -1; // 最后确认的chunk索引
 
   // 房间广播模式状态
@@ -104,6 +104,10 @@ export class FileTransferManager {
   constructor() {
     this.setupEventListeners();
     this.configureStreamSaver();
+  }
+
+  private getAckKey(chunkIndex: number, fileIndex?: number): string {
+    return `${fileIndex ?? 'default'}:${chunkIndex}`;
   }
 
   /**
@@ -484,8 +488,8 @@ export class FileTransferManager {
           file: null as any,
           index,
           metadata,
-          status: oldItem.status,
-          progress: oldItem.progress,
+          status: 'completed',
+          progress: 100,
           selected: true,
           receivedBlob: oldItem.receivedBlob, // 保留已接收的 blob
         };
@@ -552,6 +556,8 @@ export class FileTransferManager {
       if (!conn || !conn.open) {
         throw new Error('Failed to establish open connection');
       }
+
+      this.sendConnection = conn;
 
       console.log('[FileTransferManager] Connection is ready, sending file list...');
 
@@ -688,8 +694,8 @@ export class FileTransferManager {
           file: null as any,
           index,
           metadata,
-          status: oldItem.status,
-          progress: oldItem.progress,
+          status: 'completed',
+          progress: 100,
           selected: oldItem.selected,
           receivedBlob: oldItem.receivedBlob, // 保留已接收的 blob
         };
@@ -935,6 +941,8 @@ export class FileTransferManager {
       throw new Error('Connection lost');
     }
 
+    this.sendConnection = conn;
+
     const file = queueItem.file;
     const chunkSize = config.get('transfer').chunkSize;
     const sendDelay = config.get('transfer').sendDelay;
@@ -997,7 +1005,7 @@ export class FileTransferManager {
 
       // 等待ACK（第一个chunk使用更长超时，因为接收方可能在输入密码）
       const ackTimeout = i === 0 ? 60000 : 30000; // 第一个chunk等60秒，其他30秒
-      await this.waitForAck(i, ackTimeout);
+      await this.waitForAck(i, ackTimeout, queueItem.index);
 
       this.transferredBytes += chunk.byteLength;
       queueItem.progress = ((i + 1) / totalChunks) * 100;
@@ -1850,7 +1858,7 @@ export class FileTransferManager {
   /**
    * 发送ACK确认
    */
-  private sendAck(chunkIndex: number): void {
+  private sendAck(chunkIndex: number, fileIndex?: number): void {
     if (!this.receiveConnection) {
       console.warn('[FileTransfer] No receive connection to send ACK');
       return;
@@ -1860,6 +1868,7 @@ export class FileTransferManager {
       this.receiveConnection.send({
         type: 'ack',
         ackIndex: chunkIndex,
+        fileIndex,
       } as ChunkData);
     } catch (error) {
       console.error('[FileTransfer] Failed to send ACK:', error);
@@ -1869,14 +1878,14 @@ export class FileTransferManager {
   /**
    * 处理ACK确认
    */
-  private handleAck(chunkIndex: number): void {
+  private handleAck(chunkIndex: number, fileIndex?: number): void {
     this.lastAckedIndex = chunkIndex;
 
     // 解决等待该ACK的Promise
-    const resolver = this.pendingAcks.get(chunkIndex);
+    const resolver = this.pendingAcks.get(this.getAckKey(chunkIndex, fileIndex));
     if (resolver) {
       resolver();
-      this.pendingAcks.delete(chunkIndex);
+      this.pendingAcks.delete(this.getAckKey(chunkIndex, fileIndex));
     }
   }
 
@@ -1926,11 +1935,12 @@ export class FileTransferManager {
   /**
    * 等待ACK确认（带超时）
    */
-  private async waitForAck(chunkIndex: number, timeoutMs: number = 30000): Promise<void> {
+  private async waitForAck(chunkIndex: number, timeoutMs: number = 30000, fileIndex?: number): Promise<void> {
     return new Promise((resolve, reject) => {
+      const ackKey = this.getAckKey(chunkIndex, fileIndex);
       // 设置超时
       const timeout = setTimeout(() => {
-        this.pendingAcks.delete(chunkIndex);
+        this.pendingAcks.delete(ackKey);
         const errorMsg = chunkIndex === 0
           ? `等待接收方确认超时 (${timeoutMs / 1000}秒)\n\n可能原因：\n1. 接收方正在输入密码，请稍候\n2. 网络连接不稳定\n3. 接收方已断开连接`
           : `传输chunk ${chunkIndex}超时 (${timeoutMs / 1000}秒)`;
@@ -1938,7 +1948,7 @@ export class FileTransferManager {
       }, timeoutMs);
 
       // 保存resolver
-      this.pendingAcks.set(chunkIndex, () => {
+      this.pendingAcks.set(ackKey, () => {
         clearTimeout(timeout);
         resolve();
       });
@@ -2055,6 +2065,10 @@ export class FileTransferManager {
       // 开始接收队列中的某个文件
       this.handleStartFileReceived(data);
       return;
+    } else if (data.type === 'receiver-complete') {
+      console.log('[FileTransferManager] Receiver marked transfer as completed');
+      eventBus.emit('transfer:receiver-completed', { direction: 'send' });
+      return;
     } else if (data.type === 'queue-complete') {
       // 队列传输完成
       this.handleQueueCompleteReceived();
@@ -2102,7 +2116,7 @@ export class FileTransferManager {
 
         // 关键修复：即使在等待确认期间也要发送ACK，避免发送方超时
         if (data.index !== undefined) {
-          this.sendAck(data.index);
+          this.sendAck(data.index, data.fileIndex);
         }
         return;
       }
@@ -2139,7 +2153,7 @@ export class FileTransferManager {
           receiveState.transferredBytes += data.data.byteLength; // 使用原始大小计算传输字节
 
           // 发送ACK确认
-          this.sendAck(data.index);
+          this.sendAck(data.index, fileIndex);
 
           // 尝试合并连续的chunks
           await this.tryMergeBatchForFile(fileIndex);
@@ -2233,9 +2247,93 @@ export class FileTransferManager {
           this.handleBroadcastAck(peer, data.ackIndex);
         } else {
           // 点对点模式：处理ACK
-          this.handleAck(data.ackIndex);
+          this.handleAck(data.ackIndex, data.fileIndex);
         }
       }
+    } else if (data.type === 'transfer-cancelled') {
+      console.log('[FileTransferManager] Transfer cancelled by sender');
+
+      const cancelMessage = data.error || '发送方已取消本次传输';
+      const peerId = this.receiveConnection?.peer || peer;
+
+      this.clearTransferTimeout();
+
+      if (this.streamWriter) {
+        void this.streamWriter.abort().catch(() => undefined);
+        this.streamWriter = null;
+      }
+      this.isStreamingDownload = false;
+
+      if (this.receiveConnection) {
+        try {
+          this.receiveConnection.close();
+          console.log('[FileTransferManager] Closed receive connection after sender cancellation');
+        } catch (error) {
+          console.error('[FileTransferManager] Failed to close receive connection:', error);
+        }
+      }
+
+      if (peerId) {
+        p2pManager.closeConnection(peerId, 'incoming');
+      }
+
+      this.receiveConnection = null;
+      this.isTransferring = false;
+      this.transferDirection = null;
+      this.receiveMetadata = null;
+      this.receiveChunks.clear();
+      this.receiveBlobParts = [];
+      this.nextBatchIndex = 0;
+      this.receivedChunkCount = 0;
+      this.transferStartTime = 0;
+      this.transferredBytes = 0;
+      this.waitingForReceiveConfirmation = false;
+      this.pendingReceiveMetadata = null;
+      this.pendingChunks = [];
+      this.waitingForReceiverReady = false;
+      this.receiverReadyResolver = null;
+      this.receiverReadyRejecter = null;
+      if (this.receiverReadyTimeout) {
+        clearTimeout(this.receiverReadyTimeout);
+        this.receiverReadyTimeout = null;
+      }
+      this.pendingAcks.clear();
+      this.lastAckedIndex = -1;
+      this.currentQueueIndex = -1;
+
+      if (this.isQueueMode && this.queueDirection === 'receive') {
+        const hasReceivedFiles = this.fileQueue.some(
+          (item) => item.selected && (!!item.receivedBlob || item.status === 'completed'),
+        );
+
+        if (hasReceivedFiles) {
+          this.fileQueue.forEach((item) => {
+            if (item.status === 'transferring') {
+              item.status = 'failed';
+              item.error = cancelMessage;
+            }
+          });
+        } else {
+          this.fileQueue = [];
+          this.isQueueMode = false;
+          this.queueDirection = null;
+        }
+
+        eventBus.emit('transfer:queue-updated', {
+          queue: this.fileQueue,
+          direction: this.queueDirection,
+        });
+      }
+
+      if (!this.downloadBlob || !this.downloadFilename) {
+        this.downloadBlob = null;
+        this.downloadFilename = '';
+      }
+
+      eventBus.emit('transfer:cancelled', {
+        direction: 'receive',
+        message: cancelMessage,
+      });
     } else if (data.type === 'transfer-rejected') {
       // 接收方拒绝了传输
       console.log('[FileTransferManager] Transfer rejected by receiver');
@@ -2441,7 +2539,7 @@ export class FileTransferManager {
 
     // 统计结果
     const totalFiles = this.fileQueue.filter(item => item.selected).length;
-    const successCount = this.fileQueue.filter(item => item.status === 'completed').length;
+    const successCount = this.fileQueue.filter(item => item.status === 'completed' || !!item.receivedBlob).length;
     const failedCount = this.fileQueue.filter(item => item.status === 'failed').length;
 
     eventBus.emit('transfer:queue-completed', {
@@ -3006,6 +3104,85 @@ export class FileTransferManager {
   /**
    * 取消传输
    */
+  cancelP2PSend(message: string = '发送方已取消本次传输'): void {
+    const peerId = this.sendConnection?.peer;
+    const hasLocalSendSession = this.isTransferring
+      || this.waitingForReceiverReady
+      || !!this.sendConnection
+      || (!!this.currentFile && this.queueDirection === 'send')
+      || (this.isQueueMode && this.queueDirection === 'send' && this.fileQueue.length > 0);
+
+    if (!peerId && !hasLocalSendSession) {
+      console.warn('[FileTransferManager] No active P2P send session to cancel');
+      return;
+    }
+
+    if (this.sendConnection) {
+      try {
+        this.sendConnection.send({
+          type: 'transfer-cancelled',
+          error: message,
+        } as ChunkData);
+      } catch (error) {
+        console.error('[FileTransferManager] Failed to notify receiver about cancellation:', error);
+      }
+
+      try {
+        this.sendConnection.close();
+      } catch (error) {
+        console.error('[FileTransferManager] Failed to close send connection during cancellation:', error);
+      }
+    }
+
+    if (peerId) {
+      p2pManager.closeConnection(peerId, 'outgoing');
+    }
+
+    this.clearTransferTimeout();
+
+    if (this.waitingForReceiverReady && this.receiverReadyRejecter) {
+      this.receiverReadyRejecter(new Error(message));
+    } else {
+      this.waitingForReceiverReady = false;
+      this.receiverReadyResolver = null;
+      this.receiverReadyRejecter = null;
+      if (this.receiverReadyTimeout) {
+        clearTimeout(this.receiverReadyTimeout);
+        this.receiverReadyTimeout = null;
+      }
+    }
+
+    this.sendConnection = null;
+    this.isTransferring = false;
+    this.transferDirection = null;
+    this.transferStartTime = 0;
+    this.transferredBytes = 0;
+    this.sendProgress = 0;
+    this.currentQueueIndex = -1;
+    this.pendingAcks.clear();
+    this.lastAckedIndex = -1;
+
+    if (this.isQueueMode && this.queueDirection === 'send') {
+      this.fileQueue.forEach((item) => {
+        if (item.status === 'transferring') {
+          item.status = 'pending';
+          item.progress = 0;
+          delete item.error;
+        }
+      });
+
+      eventBus.emit('transfer:queue-updated', {
+        queue: this.fileQueue,
+        direction: this.queueDirection,
+      });
+    }
+
+    eventBus.emit('transfer:cancelled', {
+      direction: 'send',
+      message,
+    });
+  }
+
   cancelTransfer(): void {
     if (!this.isTransferring) return;
 
@@ -3279,6 +3456,30 @@ export class FileTransferManager {
     };
   }
 
+  confirmP2PReceiveCompleted(): boolean {
+    const hasQueueDownloads = this.isQueueMode
+      && this.queueDirection === 'receive'
+      && this.fileQueue.some((item) => item.selected && (!!item.receivedBlob || item.status === 'completed'));
+    const hasSingleDownload = !!(this.downloadBlob && this.downloadFilename);
+
+    if (!hasQueueDownloads && !hasSingleDownload) {
+      console.warn('[FileTransferManager] No received files available to mark as completed');
+      return false;
+    }
+
+    if (this.receiveConnection) {
+      try {
+        this.receiveConnection.send({ type: 'receiver-complete' } as ChunkData);
+        console.log('[FileTransferManager] Sent receiver-complete signal to sender');
+      } catch (error) {
+        console.error('[FileTransferManager] Failed to notify sender about receiver completion:', error);
+      }
+    }
+
+    eventBus.emit('transfer:receiver-completed', { direction: 'receive' });
+    return true;
+  }
+
   /**
    * 获取文件队列
    */
@@ -3303,7 +3504,7 @@ export class FileTransferManager {
 
     const selectedFiles = this.fileQueue.filter(item => item.selected);
     const totalSize = selectedFiles.reduce((sum, item) => sum + item.metadata.size, 0);
-    const completedCount = this.fileQueue.filter(item => item.status === 'completed').length;
+    const completedCount = this.fileQueue.filter(item => item.status === 'completed' || !!item.receivedBlob).length;
     const failedCount = this.fileQueue.filter(item => item.status === 'failed').length;
     const transferringCount = this.fileQueue.filter(item => item.status === 'transferring').length;
 

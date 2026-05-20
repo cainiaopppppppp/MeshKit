@@ -1,15 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+
 import {
   autoConfigureSignaling,
   getDesktopShareableWebUrl,
   loadSignalingConfigDraft,
+  parseShareInvitePayloadFromUrl,
+  parseSharedSignalingConfigFromUrl,
   resetSignalingConfigDraft,
   saveSignalingConfigDraft,
+  type ShareInvitePayload,
   type SignalingConfigDraft,
 } from '@meshkit/web/utils/signalingConfig';
 import { DesktopComputerIcon, MobilePhoneIcon } from '@meshkit/web/components/FileTransferIcons';
 
+import { ShareQrCode } from '../components/ShareQrCode';
+
 type NoticeTone = 'success' | 'warning' | 'info';
+type DesktopServicesStatus = Awaited<ReturnType<NonNullable<Window['electronAPI']>['getEmbeddedServiceStatus']>>;
 
 interface NoticeState {
   tone: NoticeTone;
@@ -21,13 +29,37 @@ function getNoticeClasses(tone: NoticeTone): string {
     case 'success':
       return 'border-green-200 bg-green-50 text-green-800';
     case 'warning':
-      return 'border-amber-200 bg-amber-50 text-amber-800';
+      return 'border-amber-200 bg-amber-50 text-amber-900';
     default:
-      return 'border-blue-200 bg-blue-50 text-blue-800';
+      return 'border-sky-200 bg-sky-50 text-sky-800';
   }
 }
 
+function getStatusPillClasses(running: boolean): string {
+  return running
+    ? 'bg-emerald-100 text-emerald-800'
+    : 'bg-rose-100 text-rose-700';
+}
+
+function formatLastSeen(lastSeenAt: number): string {
+  const diffMs = Date.now() - lastSeenAt;
+  if (diffMs < 5_000) {
+    return '刚刚在线';
+  }
+
+  const seconds = Math.max(1, Math.round(diffMs / 1000));
+  return `${seconds} 秒前在线`;
+}
+
 async function copyTextWithFallback(text: string): Promise<boolean> {
+  if (window.electronAPI?.copyText) {
+    try {
+      return await window.electronAPI.copyText(text);
+    } catch (error) {
+      console.warn('[DesktopSettingsPage] electron clipboard copy failed, trying browser fallback:', error);
+    }
+  }
+
   if (navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text);
@@ -54,7 +86,6 @@ async function copyTextWithFallback(text: string): Promise<boolean> {
   textArea.setSelectionRange(0, text.length);
 
   let copied = false;
-
   try {
     copied = document.execCommand('copy');
   } catch (error) {
@@ -73,20 +104,82 @@ async function copyTextWithFallback(text: string): Promise<boolean> {
   return copied;
 }
 
+function extractRouteSearchFromInviteLink(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const extractFromHash = (hash: string): string => {
+    const questionMarkIndex = hash.indexOf('?');
+    return questionMarkIndex >= 0 ? hash.slice(questionMarkIndex) : '';
+  };
+
+  if (trimmed.startsWith('?')) {
+    return trimmed;
+  }
+
+  try {
+    const parsedUrl = new URL(trimmed);
+    return extractFromHash(parsedUrl.hash) || parsedUrl.search;
+  } catch {
+    const hashIndex = trimmed.indexOf('#');
+    if (hashIndex >= 0) {
+      const hashSearch = extractFromHash(trimmed.slice(hashIndex));
+      if (hashSearch) {
+        return hashSearch;
+      }
+    }
+
+    const questionMarkIndex = trimmed.indexOf('?');
+    return questionMarkIndex >= 0 ? trimmed.slice(questionMarkIndex) : '';
+  }
+}
+
+function resolveInviteTargetPath(invite: ShareInvitePayload | null): string | null {
+  if (!invite) {
+    return null;
+  }
+
+  const normalizedRoute = invite.route
+    ? (invite.route.startsWith('/') ? invite.route : `/${invite.route}`)
+    : null;
+
+  if (invite.stickyNotes) {
+    return normalizedRoute === '/sticky-notes' ? normalizedRoute : '/sticky-notes';
+  }
+
+  if (invite.encryptedChat) {
+    return normalizedRoute === '/encrypted-chat' ? normalizedRoute : '/encrypted-chat';
+  }
+
+  if (invite.pickup) {
+    return normalizedRoute === '/' ? normalizedRoute : '/';
+  }
+
+  return null;
+}
+
 export function SettingsPage() {
+  const navigate = useNavigate();
   const [form, setForm] = useState<SignalingConfigDraft>({
     host: 'localhost',
     wsPort: '7000',
     peerPort: '8000',
   });
   const [notice, setNotice] = useState<NoticeState | null>(null);
+  const [serviceStatus, setServiceStatus] = useState<DesktopServicesStatus | null>(null);
+  const [shareUrlPreview, setShareUrlPreview] = useState('');
+  const [inviteLinkInput, setInviteLinkInput] = useState('');
   const [isAutoConfiguring, setIsAutoConfiguring] = useState(false);
   const [isCopyingInvite, setIsCopyingInvite] = useState(false);
-  const [shareUrlPreview, setShareUrlPreview] = useState('');
-
-  useEffect(() => {
-    setForm(loadSignalingConfigDraft());
-  }, []);
+  const [isRefreshingServices, setIsRefreshingServices] = useState(false);
+  const [isTogglingSharing, setIsTogglingSharing] = useState(false);
+  const isShareReady = !!(
+    serviceStatus?.sharingEnabled
+    && serviceStatus.signaling.running
+    && serviceStatus.shareWeb.running
+  );
 
   const preview = useMemo(() => {
     const host = form.host.trim() || 'localhost';
@@ -106,26 +199,94 @@ export function SettingsPage() {
     }));
   };
 
+  const refreshServiceStatus = async (silent = false) => {
+    if (!window.electronAPI?.getEmbeddedServiceStatus) {
+      return;
+    }
+
+    if (!silent) {
+      setIsRefreshingServices(true);
+    }
+
+    try {
+      const nextStatus = await window.electronAPI.getEmbeddedServiceStatus();
+      setServiceStatus(nextStatus);
+    } catch (error) {
+      console.error('[DesktopSettingsPage] Failed to load embedded service status:', error);
+      if (!silent) {
+        setNotice({
+          tone: 'warning',
+          message: '读取共享状态失败，请稍后重试。',
+        });
+      }
+    } finally {
+      if (!silent) {
+        setIsRefreshingServices(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    setForm(loadSignalingConfigDraft());
+    void refreshServiceStatus(true);
+
+    const timer = window.setInterval(() => {
+      void refreshServiceStatus(true);
+    }, 4000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!isShareReady) {
+      setShareUrlPreview('');
+      return undefined;
+    }
+
+    void getDesktopShareableWebUrl(form, '/', serviceStatus.shareWeb.port)
+      .then((result) => {
+        if (!cancelled) {
+          setShareUrlPreview(result.url);
+        }
+      })
+      .catch((error) => {
+        console.error('[DesktopSettingsPage] Failed to build share URL preview:', error);
+        if (!cancelled) {
+          setShareUrlPreview('');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [form, isShareReady, serviceStatus?.shareWeb.port]);
+
   const handleSave = () => {
     const saved = saveSignalingConfigDraft(form);
-    setForm({
+    const nextDraft = {
       host: saved.host,
       wsPort: String(saved.wsPort),
       peerPort: String(saved.peerPort),
-    });
+    };
+
+    setForm(nextDraft);
     setNotice({
       tone: 'success',
-      message: `配置已保存为 ${saved.host}。之后会使用这组信令地址。`,
+      message: `已保存连接配置：${saved.host}:${saved.wsPort}/${saved.peerPort}`,
     });
   };
 
   const handleReset = () => {
     const resetDraft = resetSignalingConfigDraft();
     setForm(resetDraft);
-    setShareUrlPreview('');
+    setInviteLinkInput('');
     setNotice({
       tone: 'info',
-      message: '已经恢复默认配置。本机测试可继续使用 localhost。',
+      message: '已恢复默认配置。桌面端会优先使用当前电脑的内置共享服务。',
     });
   };
 
@@ -133,7 +294,7 @@ export function SettingsPage() {
     setIsAutoConfiguring(true);
     setNotice({
       tone: 'info',
-      message: '正在自动探测可用的信令服务器，请稍候...',
+      message: '正在自动探测可用的共享主机...',
     });
 
     try {
@@ -150,19 +311,19 @@ export function SettingsPage() {
         saveSignalingConfigDraft(nextDraft);
         setNotice({
           tone: 'success',
-          message: `已自动配置并保存为 ${result.config.host}。`,
+          message: `自动配置成功，已切换到 ${result.config.host}。`,
         });
       } else {
         setNotice({
           tone: 'warning',
-          message: `暂时没有探测到可用服务，先帮你填入了最可能的地址 ${result.config.host}。确认信令服务启动后再保存即可。`,
+          message: `暂时没探测到已在线服务，先为你填入了最可能的地址 ${result.config.host}。确认对方电脑已开启共享后，再保存即可。`,
         });
       }
     } catch (error) {
       console.error('[DesktopSettingsPage] Auto configure failed:', error);
       setNotice({
         tone: 'warning',
-        message: '自动配置失败。你仍然可以手动输入服务器地址并保存。',
+        message: '自动配置失败，你仍然可以手动输入地址或使用附近共享列表。',
       });
     } finally {
       setIsAutoConfiguring(false);
@@ -170,192 +331,491 @@ export function SettingsPage() {
   };
 
   const handleCopyInviteLink = async () => {
+    if (!isShareReady) {
+      setNotice({
+        tone: 'warning',
+        message: '共享还没有开启成功，请先点击“开始共享”。',
+      });
+      return;
+    }
+
     setIsCopyingInvite(true);
 
     try {
-      const result = await getDesktopShareableWebUrl(form);
+      const result = await getDesktopShareableWebUrl(form, '/', serviceStatus.shareWeb.port);
       setShareUrlPreview(result.url);
 
       const copied = await copyTextWithFallback(result.url);
-      if (!copied) {
-        window.prompt('复制失败，请手动复制下面的邀请链接：', result.url);
-      }
-
       setNotice({
         tone: copied ? 'success' : 'info',
         message: copied
-          ? `邀请链接已复制。对方打开后会自动写入 ${result.signalHost}。`
-          : `邀请链接已生成。对方打开后会自动写入 ${result.signalHost}，你可以手动复制后发给对方。`,
+          ? `邀请链接已复制，对方打开后会自动写入 ${result.signalHost}。`
+          : '邀请链接已生成，但系统没给剪贴板权限。你可以手动复制下方的当前共享地址。',
       });
     } catch (error) {
-      console.error('[DesktopSettingsPage] Failed to create invite link:', error);
+      console.error('[DesktopSettingsPage] Failed to build invite link:', error);
       setNotice({
         tone: 'warning',
-        message: '生成邀请链接失败。请先确认本机局域网地址可用，再重试。',
+        message: '生成邀请链接失败，请先确认共享服务已经正常启动。',
       });
     } finally {
       setIsCopyingInvite(false);
     }
   };
 
+  const applySharedLink = (link: string, sourceLabel: string) => {
+    const parsed = parseSharedSignalingConfigFromUrl(link);
+    if (!parsed) {
+      setNotice({
+        tone: 'warning',
+        message: `未能从${sourceLabel}中识别到有效的共享参数。`,
+      });
+      return;
+    }
+
+    const invitePayload = parseShareInvitePayloadFromUrl(link);
+    const targetPath = resolveInviteTargetPath(invitePayload);
+    const targetSearch = targetPath ? extractRouteSearchFromInviteLink(link) : '';
+    const nextDraft = {
+      host: parsed.host,
+      wsPort: String(parsed.wsPort),
+      peerPort: String(parsed.peerPort),
+    };
+
+    saveSignalingConfigDraft(nextDraft);
+    setForm(nextDraft);
+    setNotice({
+      tone: 'success',
+      message: targetPath
+        ? `已应用${sourceLabel}，正在打开对应页面。`
+        : `已应用${sourceLabel}，当前将连接到 ${parsed.host}。`,
+    });
+
+    if (targetPath) {
+      navigate(`${targetPath}${targetSearch}`);
+    }
+  };
+
+  const handleImportInviteLinkResolved = () => {
+    applySharedLink(inviteLinkInput, '邀请链接');
+  };
+
+  const handleImportInviteLink = () => {
+    applySharedLink(inviteLinkInput, '邀请');
+  };
+
+  const handleRestartServices = async () => {
+    if (!window.electronAPI?.restartEmbeddedServices) {
+      return;
+    }
+
+    setIsRefreshingServices(true);
+    setNotice({
+      tone: 'info',
+      message: '正在重启共享服务，请稍等...',
+    });
+
+    try {
+      const nextStatus = await window.electronAPI.restartEmbeddedServices();
+      setServiceStatus(nextStatus);
+      setNotice({
+        tone: nextStatus.signaling.running && nextStatus.shareWeb.running ? 'success' : 'warning',
+        message: nextStatus.signaling.running && nextStatus.shareWeb.running
+          ? '共享服务已重新启动。'
+          : '共享服务已尝试重启，但仍有模块未能启动成功，请查看下方状态。',
+      });
+    } catch (error) {
+      console.error('[DesktopSettingsPage] Failed to restart embedded services:', error);
+      setNotice({
+        tone: 'warning',
+        message: '重启共享服务失败，请稍后再试。',
+      });
+    } finally {
+      setIsRefreshingServices(false);
+    }
+  };
+
+  const handleToggleSharing = async () => {
+    if (!window.electronAPI?.startEmbeddedServices || !window.electronAPI?.stopEmbeddedServices) {
+      return;
+    }
+
+    setIsTogglingSharing(true);
+    setNotice({
+      tone: 'info',
+      message: serviceStatus?.sharingEnabled ? '正在停止共享...' : '正在开始共享...',
+    });
+
+    try {
+      const nextStatus = serviceStatus?.sharingEnabled
+        ? await window.electronAPI.stopEmbeddedServices()
+        : await window.electronAPI.startEmbeddedServices();
+
+      setServiceStatus(nextStatus);
+      setNotice({
+        tone: nextStatus.sharingEnabled ? 'success' : 'info',
+        message: nextStatus.sharingEnabled
+          ? '共享已开启，现在可以复制链接或让手机扫码加入。'
+          : '共享已停止，当前电脑不会再对外广播或提供分享页面。',
+      });
+    } catch (error) {
+      console.error('[DesktopSettingsPage] Failed to toggle sharing:', error);
+      setNotice({
+        tone: 'warning',
+        message: '切换共享状态失败，请稍后再试。',
+      });
+    } finally {
+      setIsTogglingSharing(false);
+    }
+  };
+
+  const discoveredShares = serviceStatus?.discovery.discoveredShares || [];
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-slate-100 px-4 py-8">
-      <div className="mx-auto max-w-2xl">
-        <div className="mb-8 text-center">
-          <h1 className="mb-2 text-3xl font-bold text-gray-900">应用设置</h1>
-          <p className="text-gray-600">配置桌面端要连接的信令服务，并生成可发给手机或浏览器用户的邀请链接</p>
-        </div>
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.14),_transparent_36%),linear-gradient(180deg,_#f7fbff_0%,_#eef5ff_46%,_#f8fafc_100%)] px-4 py-8">
+      <div className="mx-auto max-w-6xl space-y-6">
+        <section className="rounded-[32px] border border-white/70 bg-white/85 p-8 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur">
+          <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+            <div className="max-w-3xl">
+              <p className="mb-2 text-sm font-semibold uppercase tracking-[0.28em] text-sky-600">
+                MeshKit Share Hub
+              </p>
+              <h1 className="text-3xl font-bold tracking-tight text-slate-950">共享中心</h1>
+              <p className="mt-3 text-sm leading-6 text-slate-600">
+                这台电脑现在可以自己托管信令服务、浏览器分享页，并在局域网里自动广播。你只要开始共享，然后把链接发出去，或者让对方直接扫码加入。
+              </p>
+            </div>
 
-        <div className="mb-6 rounded-2xl bg-white p-8 shadow-lg">
-          <h2 className="mb-6 text-xl font-bold text-gray-900">信令服务器配置</h2>
-
-          <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-            <p className="font-semibold">推荐顺序</p>
-            <ol className="mt-2 list-inside list-decimal space-y-1 text-blue-800">
-              <li>先在一台电脑上运行 <code className="rounded bg-blue-100 px-1">pnpm dev:signaling</code></li>
-              <li>点击“一键自动配置”，应用会优先尝试 WLAN 或以太网地址，尽量避开 VMware / Hyper-V 等虚拟网卡</li>
-              <li>需要分享给手机浏览器时，再点击“复制邀请链接”</li>
-            </ol>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={handleToggleSharing}
+                disabled={isTogglingSharing}
+                className="rounded-full bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isTogglingSharing
+                  ? (serviceStatus?.sharingEnabled ? '正在停止共享...' : '正在开始共享...')
+                  : (serviceStatus?.sharingEnabled ? '停止共享' : '开始共享')}
+              </button>
+              <button
+                onClick={handleCopyInviteLink}
+                disabled={isCopyingInvite || !isShareReady}
+                className="rounded-full border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isCopyingInvite ? '正在复制...' : '复制邀请链接'}
+              </button>
+              <button
+                onClick={handleRestartServices}
+                disabled={isRefreshingServices}
+                className="rounded-full border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isRefreshingServices ? '正在重启...' : '重启共享服务'}
+              </button>
+            </div>
           </div>
+        </section>
 
-          {notice && (
-            <div className={`mb-6 rounded-xl border p-4 text-sm ${getNoticeClasses(notice.tone)}`}>
-              {notice.message}
-            </div>
-          )}
+        {notice && (
+          <div className={`rounded-2xl border px-5 py-4 text-sm ${getNoticeClasses(notice.tone)}`}>
+            {notice.message}
+          </div>
+        )}
 
-          <div className="space-y-6">
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-gray-700">
-                服务器地址
-              </label>
-              <input
-                type="text"
-                value={form.host}
-                onChange={(e) => updateField('host', e.target.value)}
-                placeholder="例如 192.168.1.100 或 localhost"
-                className="w-full rounded-lg border-2 border-gray-300 px-4 py-3 text-lg text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none"
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                如果这台桌面端本身就在运行信令服务，分享给其他设备时会自动把 localhost 换成本机局域网 IP。
-              </p>
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-gray-700">
-                WebSocket 端口
-              </label>
-              <input
-                type="number"
-                value={form.wsPort}
-                onChange={(e) => updateField('wsPort', e.target.value)}
-                placeholder="7000"
-                className="w-full rounded-lg border-2 border-gray-300 px-4 py-3 text-lg text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-gray-700">
-                PeerJS 端口
-              </label>
-              <input
-                type="number"
-                value={form.peerPort}
-                onChange={(e) => updateField('peerPort', e.target.value)}
-                placeholder="8000"
-                className="w-full rounded-lg border-2 border-gray-300 px-4 py-3 text-lg text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none"
-              />
-            </div>
-
-            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-              <p className="mb-2 text-sm font-semibold text-gray-700">配置预览</p>
-              <div className="space-y-1 font-mono text-sm text-gray-600">
-                <div>WebSocket: {preview.wsUrl}</div>
-                <div>PeerJS: {preview.peerUrl}</div>
+        <section className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+          <article className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-950">当前共享地址</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  这是推荐发给手机和浏览器的地址。打开后会自动写入这台电脑的连接参数。
+                </p>
               </div>
+              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusPillClasses(isShareReady)}`}>
+                {isShareReady ? '共享中' : '未共享'}
+              </span>
             </div>
 
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-              <p className="mb-2 text-sm font-semibold text-emerald-900">浏览器邀请链接</p>
-              <p className="text-sm text-emerald-800">
-                这个链接默认会指向本机 <code className="rounded bg-emerald-100 px-1">3000</code> 端口的网页，并把当前信令地址一并带上。对方打开后会自动完成配置。
-              </p>
-              <p className="mt-2 text-xs text-emerald-700">
-                使用前请先在这台电脑上启动网页版本，例如运行 <code className="rounded bg-emerald-100 px-1">pnpm dev:web</code>。
-              </p>
+            <div className="mt-5 space-y-4">
+              <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Share URL</div>
+                <div className="mt-2 break-all rounded-2xl bg-white px-4 py-4 font-mono text-xs text-slate-800">
+                  {shareUrlPreview || '开启共享后，这里会显示可直接分享的邀请链接。'}
+                </div>
+              </div>
 
-              <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
-                <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-white/80 px-3 py-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
-                    <DesktopComputerIcon className="h-5 w-5" />
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="rounded-[24px] border border-emerald-200 bg-emerald-50 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Signal Host</div>
+                  <div className="mt-2 text-sm font-semibold text-emerald-950">
+                    {form.host || serviceStatus?.preferredHost || 'localhost'}
                   </div>
-                  <div>
-                    <div className="text-sm font-semibold text-emerald-950">电脑</div>
-                    <div className="text-xs text-emerald-700">运行 Web 页面并复制邀请链接</div>
+                  <div className="mt-1 font-mono text-xs text-emerald-800">
+                    {serviceStatus?.signaling.wsUrl || preview.wsUrl}
                   </div>
                 </div>
 
-                <div className="hidden text-center text-emerald-300 sm:block">
+                <div className="rounded-[24px] border border-sky-200 bg-sky-50 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">LAN Address</div>
+                  <div className="mt-2 text-sm font-semibold text-sky-950">
+                    {serviceStatus?.preferredHost || '127.0.0.1'}
+                  </div>
+                  <div className="mt-1 font-mono text-xs text-sky-800">
+                    {serviceStatus?.shareWeb.url || '等待分享页启动...'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-[1fr_auto_1fr] md:items-center">
+                <div className="flex items-center gap-4 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-4">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-900 text-white">
+                    <DesktopComputerIcon className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-slate-950">电脑端</div>
+                    <div className="text-sm text-slate-600">点击开始共享，再复制邀请链接</div>
+                  </div>
+                </div>
+
+                <div className="hidden justify-center text-slate-300 md:flex">
                   <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 12h14m-4-4 4 4-4 4" />
                   </svg>
                 </div>
 
-                <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-white/80 px-3 py-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-sky-100 text-sky-700">
-                    <MobilePhoneIcon className="h-5 w-5" />
+                <div className="flex items-center gap-4 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-4">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-sky-100 text-sky-700">
+                    <MobilePhoneIcon className="h-6 w-6" />
                   </div>
                   <div>
-                    <div className="text-sm font-semibold text-emerald-950">手机</div>
-                    <div className="text-xs text-emerald-700">打开链接后自动写入信令 IP</div>
+                    <div className="font-semibold text-slate-950">手机或浏览器</div>
+                    <div className="text-sm text-slate-600">扫码或打开链接后，自动完成连接配置</div>
                   </div>
                 </div>
               </div>
+            </div>
+          </article>
 
-              {shareUrlPreview && (
-                <div className="mt-4 break-all rounded-lg border border-emerald-200 bg-white px-3 py-2 font-mono text-xs text-emerald-900">
-                  {shareUrlPreview}
+          <ShareQrCode
+            text={shareUrlPreview}
+            title="扫码加入"
+            caption="手机直接扫这个二维码，就会打开内置分享页并自动写入当前电脑的连接地址。"
+          />
+        </section>
+
+        <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+          <article className="rounded-[28px] border border-white/70 bg-white p-6 shadow-sm">
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-950">附近共享</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  同一局域网里已开启共享的电脑会自动出现在这里。点一下就能把连接地址填入本机。
+                </p>
+              </div>
+              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusPillClasses(!!serviceStatus?.discovery.running)}`}>
+                {serviceStatus?.discovery.running ? '自动发现已开启' : '自动发现未开启'}
+              </span>
+            </div>
+
+            {discoveredShares.length > 0 ? (
+              <div className="space-y-3">
+                {discoveredShares.map((share) => (
+                  <div key={share.instanceId} className="rounded-[24px] border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-slate-950">{share.deviceName}</div>
+                        <div className="mt-1 font-mono text-xs text-slate-600">
+                          {share.shareUrl}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+                          <span>Host: {share.host}</span>
+                          <span>WS: {share.wsPort}</span>
+                          <span>Peer: {share.peerPort}</span>
+                          <span>{formatLastSeen(share.lastSeenAt)}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() => applySharedLink(share.shareUrl, `附近共享 ${share.deviceName}`)}
+                          className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+                        >
+                          使用这个地址加入
+                        </button>
+                        <button
+                          onClick={() => {
+                            void copyTextWithFallback(share.shareUrl);
+                            setNotice({
+                              tone: 'success',
+                              message: `已复制 ${share.deviceName} 的分享链接。`,
+                            });
+                          }}
+                          className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                        >
+                          复制链接
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm leading-7 text-slate-500">
+                还没有发现附近共享。确认另一台电脑已经打开 MeshKit 并开启共享后，这里会自动刷新。
+              </div>
+            )}
+          </article>
+
+          <article className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-bold text-slate-950">共享状态</h2>
+
+            <div className="mt-5 space-y-3">
+              <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-semibold text-slate-900">内置信令服务</span>
+                  <span className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusPillClasses(!!serviceStatus?.signaling.running)}`}>
+                    {serviceStatus?.signaling.running ? '运行中' : '未启动'}
+                  </span>
                 </div>
-              )}
+                <div className="mt-2 font-mono text-xs text-slate-600">{serviceStatus?.signaling.wsUrl || preview.wsUrl}</div>
+                {serviceStatus?.signaling.error && (
+                  <div className="mt-2 text-xs text-rose-700">{serviceStatus.signaling.error}</div>
+                )}
+              </div>
 
-              <button
-                onClick={handleCopyInviteLink}
-                disabled={isCopyingInvite}
-                className="mt-4 w-full rounded-lg bg-emerald-600 px-4 py-3 font-semibold text-white transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isCopyingInvite ? '正在生成邀请链接...' : '复制邀请链接'}
-              </button>
+              <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-semibold text-slate-900">浏览器分享页</span>
+                  <span className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusPillClasses(!!serviceStatus?.shareWeb.running)}`}>
+                    {serviceStatus?.shareWeb.running ? '可访问' : '未启动'}
+                  </span>
+                </div>
+                <div className="mt-2 font-mono text-xs text-slate-600">{serviceStatus?.shareWeb.url || '等待启动'}</div>
+                {serviceStatus?.shareWeb.error && (
+                  <div className="mt-2 text-xs text-rose-700">{serviceStatus.shareWeb.error}</div>
+                )}
+              </div>
+
+              <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-semibold text-slate-900">局域网自动发现</span>
+                  <span className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusPillClasses(!!serviceStatus?.discovery.running)}`}>
+                    {serviceStatus?.discovery.running ? '广播中' : '未启动'}
+                  </span>
+                </div>
+                <div className="mt-2 text-xs text-slate-600">
+                  本机识别地址：{serviceStatus?.localAddresses.join(' / ') || '读取中...'}
+                </div>
+                {serviceStatus?.discovery.error && (
+                  <div className="mt-2 text-xs text-rose-700">{serviceStatus.discovery.error}</div>
+                )}
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+          <article className="rounded-[28px] border border-white/70 bg-white p-6 shadow-sm">
+            <div className="mb-5">
+              <h2 className="text-lg font-bold text-slate-950">导入邀请链接</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                如果别人直接把邀请网址发给你，你可以粘贴到这里，一键导入连接配置。
+              </p>
             </div>
 
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <button
-                onClick={handleAutoConfigure}
-                disabled={isAutoConfiguring}
-                className="flex-1 rounded-lg bg-sky-500 px-6 py-3 font-semibold text-white transition-all hover:bg-sky-600 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isAutoConfiguring ? '正在自动配置...' : '一键自动配置'}
-              </button>
-              <button
-                onClick={handleSave}
-                className="flex-1 rounded-lg bg-gradient-to-r from-blue-500 to-indigo-600 px-6 py-3 font-semibold text-white transition-all hover:shadow-lg"
-              >
-                保存配置
-              </button>
-              <button
-                onClick={handleReset}
-                className="flex-1 rounded-lg border-2 border-gray-300 px-6 py-3 font-semibold text-gray-700 transition-all hover:bg-gray-50"
-              >
-                重置
-              </button>
+            <div className="space-y-3">
+              <textarea
+                value={inviteLinkInput}
+                onChange={(event) => setInviteLinkInput(event.target.value)}
+                placeholder="把邀请链接粘贴到这里，例如 http://192.168.x.x:3000/?meshkitHost=..."
+                rows={4}
+                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none"
+              />
+              <div className="flex flex-wrap gap-3">
+                <button
+                  onClick={handleImportInviteLinkResolved}
+                  className="rounded-full bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700"
+                >
+                  导入邀请链接
+                </button>
+                <button
+                  onClick={handleAutoConfigure}
+                  disabled={isAutoConfiguring}
+                  className="rounded-full border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isAutoConfiguring ? '正在自动探测...' : '一键自动配置'}
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
+          </article>
 
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
-          <h3 className="mb-2 font-bold">补充说明</h3>
-          <p className="mb-1">桌面端本身不会变成一个能给手机直接打开的网页，所以分享给手机时，实际发出去的是浏览器页面链接。</p>
-          <p>这就是为什么复制邀请链接前，需要先让这台电脑上的 Web 页面也能被访问。</p>
-        </div>
+          <article className="rounded-[28px] border border-white/70 bg-white p-6 shadow-sm">
+            <div className="mb-5">
+              <h2 className="text-lg font-bold text-slate-950">高级连接配置</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                仅在你需要手动指定别的服务器时使用。普通情况下，直接共享或导入邀请链接就够了。
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-700">服务器地址</label>
+                <input
+                  type="text"
+                  value={form.host}
+                  onChange={(event) => updateField('host', event.target.value)}
+                  placeholder={serviceStatus?.preferredHost || 'localhost'}
+                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-slate-700">WebSocket 端口</label>
+                  <input
+                    type="number"
+                    value={form.wsPort}
+                    onChange={(event) => updateField('wsPort', event.target.value)}
+                    placeholder="7000"
+                    className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-slate-700">PeerJS 端口</label>
+                  <input
+                    type="number"
+                    value={form.peerPort}
+                    onChange={(event) => updateField('peerPort', event.target.value)}
+                    placeholder="8000"
+                    className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                <div className="mb-2 font-semibold text-slate-900">连接预览</div>
+                <div className="space-y-1 font-mono text-xs">
+                  <div>WebSocket: {preview.wsUrl}</div>
+                  <div>PeerJS: {preview.peerUrl}</div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-3">
+                <button
+                  onClick={handleSave}
+                  className="rounded-full bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+                >
+                  保存配置
+                </button>
+                <button
+                  onClick={handleReset}
+                  className="rounded-full border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  重置为默认
+                </button>
+              </div>
+            </div>
+          </article>
+        </section>
       </div>
     </div>
   );

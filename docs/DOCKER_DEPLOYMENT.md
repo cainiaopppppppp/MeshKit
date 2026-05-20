@@ -1,135 +1,102 @@
-# MeshKit Docker 部署指南
+# Docker 部署指南
 
-本文档详细说明如何使用 Docker 部署 MeshKit 项目。
+本文档适用于 MeshKit 1.1.0 的 Docker 部署。当前 Docker 化的服务包括：
 
-## 目录
+- `web`: Web 前端静态站点，通过 Nginx 提供访问。
+- `signaling`: WebSocket + PeerJS signaling 服务。
 
-- [快速开始](#快速开始)
-- [使用 Docker Compose](#使用-docker-compose)
-- [单独部署各服务](#单独部署各服务)
-- [生产环境配置](#生产环境配置)
-- [常见问题](#常见问题)
+Desktop 是 Electron 桌面应用，不通过 Docker 运行。
 
----
+## 快速启动
 
-## 快速开始
-
-### 前置要求
-
-- Docker 20.10+
-- Docker Compose 1.29+
-
-### 一键部署（推荐）
-
-使用 Docker Compose 同时启动信令服务器和 Web 应用：
+在仓库根目录执行：
 
 ```bash
-# 克隆项目
-git clone https://github.com/cainiaopppppppp/p2p_claude.git
-cd p2p_claude
-
-# 启动所有服务
-docker-compose up -d
-
-# 查看日志
-docker-compose logs -f
-
-# 停止服务
-docker-compose down
+docker compose up -d --build
 ```
 
-启动后访问：
-- Web 应用: http://localhost:3000
-- 信令服务器 WebSocket: ws://localhost:7000
-- PeerJS 服务器: http://localhost:8000
+默认访问地址：
 
----
+| 服务 | 地址 |
+| --- | --- |
+| Web 页面 | `http://localhost:3000` |
+| WebSocket signaling | `ws://localhost:7000/ws` |
+| PeerJS 服务 | `http://localhost:8000/peerjs` |
 
-## 使用 Docker Compose
-
-### docker-compose.yml 配置
-
-项目根目录的 `docker-compose.yml` 包含了完整的服务配置。
-
-### 常用命令
+查看状态和日志：
 
 ```bash
-# 启动服务（后台运行）
-docker-compose up -d
-
-# 查看运行状态
-docker-compose ps
-
-# 查看日志
-docker-compose logs -f
-
-# 查看特定服务日志
-docker-compose logs -f signaling
-docker-compose logs -f web
-
-# 重启服务
-docker-compose restart
-
-# 停止服务
-docker-compose stop
-
-# 停止并删除容器
-docker-compose down
-
-# 停止并删除容器、网络、镜像
-docker-compose down --rmi all
-
-# 重新构建镜像
-docker-compose build
-
-# 重新构建并启动
-docker-compose up -d --build
+docker compose ps
+docker compose logs -f
+docker compose logs -f signaling
+docker compose logs -f web
 ```
 
-### 修改端口
+停止服务：
 
-如果默认端口被占用，可以修改 `docker-compose.yml`：
+```bash
+docker compose down
+```
+
+## Compose 服务
+
+`docker-compose.yml` 包含两个服务。
+
+`signaling`:
+
+- 镜像名为 `meshkit-signaling:1.1.0`。
+- 暴露 `7000` 和 `8000`。
+- 提供 `/healthz` 健康检查。
+- 通过环境变量控制端口和过期清理时间。
+
+`web`:
+
+- 镜像名为 `meshkit-web:1.1.0`。
+- 暴露宿主机 `3000` 到容器 `80`。
+- 依赖 `signaling` 健康后启动。
+- 提供 `/healthz` 健康检查。
+
+## 环境变量
+
+`signaling` 支持以下环境变量：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `HOST` | `0.0.0.0` | 服务监听地址 |
+| `WS_PORT` | `7000` | WebSocket 端口 |
+| `PEER_PORT` | `8000` | PeerJS 端口 |
+| `DEVICE_STALE_TIME` | `45000` | 设备过期时间，毫秒 |
+| `ROOM_STALE_TIME` | `3600000` | 房间过期时间，毫秒 |
+| `CLEANUP_INTERVAL` | `5000` | 清理任务间隔，毫秒 |
+
+如果宿主机端口冲突，可以只修改左侧端口映射，例如：
 
 ```yaml
-services:
-  signaling:
-    ports:
-      - "7001:7000"  # 改为 7001
-      - "8001:8000"  # 改为 8001
-
-  web:
-    ports:
-      - "3001:80"    # 改为 3001
+ports:
+  - "3001:80"
+  - "7001:7000"
+  - "8001:8000"
 ```
 
-### 环境变量
+同时需要在前端连接配置中使用新的宿主机端口。
 
-可以通过环境变量配置信令服务器：
+## 单独构建镜像
 
-```yaml
-services:
-  signaling:
-    environment:
-      - NODE_ENV=production
-      - WS_PORT=7000
-      - PEER_PORT=8000
-      - LOG_LEVEL=info  # 日志级别：debug, info, warn, error
-```
-
----
-
-## 单独部署各服务
-
-### 1. 部署信令服务器
-
-#### 构建镜像
+构建 signaling：
 
 ```bash
-# 在项目根目录执行
-docker build -t meshkit-signaling -f apps/signaling/Dockerfile .
+docker build -t meshkit-signaling:1.1.0 -f apps/signaling/Dockerfile .
 ```
 
-#### 运行容器
+构建 Web：
+
+```bash
+docker build -t meshkit-web:1.1.0 -f packages/web/Dockerfile .
+```
+
+## 单独运行容器
+
+运行 signaling：
 
 ```bash
 docker run -d \
@@ -137,211 +104,105 @@ docker run -d \
   -p 7000:7000 \
   -p 8000:8000 \
   -e NODE_ENV=production \
+  -e HOST=0.0.0.0 \
   -e WS_PORT=7000 \
   -e PEER_PORT=8000 \
+  -e DEVICE_STALE_TIME=45000 \
+  -e ROOM_STALE_TIME=3600000 \
+  -e CLEANUP_INTERVAL=5000 \
   --restart unless-stopped \
-  meshkit-signaling
+  meshkit-signaling:1.1.0
 ```
 
-#### 查看日志
-
-```bash
-docker logs -f meshkit-signaling
-```
-
-#### 停止和删除
-
-```bash
-docker stop meshkit-signaling
-docker rm meshkit-signaling
-```
-
-### 2. 部署 Web 应用
-
-#### 构建镜像
-
-```bash
-# 在项目根目录执行
-docker build -t meshkit-web -f packages/web/Dockerfile .
-```
-
-#### 运行容器
+运行 Web：
 
 ```bash
 docker run -d \
   --name meshkit-web \
   -p 3000:80 \
   --restart unless-stopped \
-  meshkit-web
+  meshkit-web:1.1.0
 ```
 
-#### 自定义 Nginx 配置
+## 局域网访问
 
-如果需要自定义 Nginx 配置，可以挂载配置文件：
+局域网设备访问时，不要使用 `localhost`，应使用部署机器的局域网 IP，例如：
+
+```text
+http://192.168.1.20:3000
+ws://192.168.1.20:7000/ws
+http://192.168.1.20:8000/peerjs
+```
+
+同时确认：
+
+- 宿主机防火墙允许 `3000`、`7000`、`8000`。
+- 手机或另一台电脑与宿主机处于同一网络，或网络之间可互相访问。
+- 浏览器中的 signaling 和 PeerJS 地址填写的是宿主机 IP。
+
+## HTTPS 建议
+
+默认 Docker Web 镜像提供 HTTP。如果要放到公开网络、使用自定义域名，或想减少浏览器权限问题，可以在 Docker 前面增加 HTTPS 反向代理，例如 Caddy、Nginx Proxy Manager、Traefik 或自维护 Nginx。
+
+放到公开网络时还需要额外考虑：
+
+- 邀请链接不要公开暴露给不认识的人。
+- signaling 服务没有账号体系，建议通过网络层限制访问范围。
+- 复杂 NAT 环境下可能需要 STUN/TURN 方案。
+
+## 升级
+
+仓库更新后，推荐重新构建镜像：
 
 ```bash
-docker run -d \
-  --name meshkit-web \
-  -p 3000:80 \
-  -v $(pwd)/packages/web/nginx.conf:/etc/nginx/conf.d/default.conf:ro \
-  --restart unless-stopped \
-  meshkit-web
+docker compose down
+docker compose up -d --build
 ```
 
----
-
-## 生产环境配置（可选）
-
-本项目主要面向本地和局域网使用场景。如需在生产环境部署，包括 HTTPS 配置、反向代理、防火墙设置等，请自行配置。
-
----
-
-## 常见问题
-
-### 1. 构建失败：pnpm install 超时
-
-**解决方案：增加构建超时时间**
+仅刷新镜像：
 
 ```bash
-# 使用 --build-arg 传递参数
-docker build --build-arg BUILD_TIMEOUT=600 -t meshkit-signaling -f apps/signaling/Dockerfile .
+docker compose build
+docker compose up -d
 ```
 
-或修改 Dockerfile 添加国内镜像源：
+## 排查
 
-```dockerfile
-# 在 Dockerfile 中添加
-RUN pnpm config set registry https://registry.npmmirror.com
-```
-
-### 2. 容器启动失败
-
-**检查日志：**
+Web 页面打不开：
 
 ```bash
-docker logs meshkit-signaling
-docker logs meshkit-web
+docker compose ps
+docker compose logs -f web
 ```
 
-**检查端口占用：**
+Web 能打开，但设备发现或 RTC 不通：
+
+- 检查 `7000` 和 `8000` 端口是否映射成功。
+- 检查前端连接地址是否使用了正确的宿主机 IP。
+- 检查防火墙是否拦截。
+- 确认 signaling 容器健康。
+
+手动检查健康接口：
 
 ```bash
-# Linux/Mac
-lsof -i :7000
-lsof -i :8000
-lsof -i :3000
+docker exec -it meshkit-signaling sh
+wget -q -O - http://127.0.0.1:7000/healthz
+wget -q -O - http://127.0.0.1:8000/healthz
 
-# Windows
-netstat -ano | findstr :7000
-netstat -ano | findstr :8000
-netstat -ano | findstr :3000
+docker exec -it meshkit-web sh
+wget -q -O - http://127.0.0.1/healthz
 ```
 
-### 3. Web 应用无法连接到信令服务器
-
-**原因：** 客户端无法访问信令服务器地址
-
-**解决方案：**
-
-1. 检查防火墙规则
-2. 确保信令服务器端口已开放
-3. 在 Web 应用设置页面配置正确的服务器地址
-
-### 4. 跨域问题
-
-如果遇到 CORS 错误，需要在信令服务器添加 CORS 支持。
-
-修改 `apps/signaling/src/server.js`：
-
-```typescript
-import cors from 'cors';
-
-app.use(cors({
-  origin: '*', // 生产环境应该设置具体域名
-  credentials: true
-}));
-```
-
-### 5. Docker 镜像太大
-
-**优化建议：**
-
-1. 使用 `.dockerignore` 排除不必要的文件
-2. 使用多阶段构建
-3. 清理构建缓存
+重建后页面仍是旧内容：
 
 ```bash
-# 清理未使用的镜像
-docker image prune -a
-
-# 查看镜像大小
-docker images | grep meshkit
+docker compose up -d --build
 ```
 
-### 6. 重启后容器未自动启动
+然后在浏览器中强制刷新页面。
 
-**解决方案：** 使用 `--restart` 参数
+## 相关文档
 
-```bash
-docker run -d --restart unless-stopped ...
-```
-
-或在 docker-compose.yml 中添加：
-
-```yaml
-services:
-  signaling:
-    restart: always  # 或 unless-stopped
-```
-
----
-
----
-
-## 升级和维护
-
-### 升级应用
-
-```bash
-# 拉取最新代码
-git pull
-
-# 重新构建镜像
-docker-compose build
-
-# 停止旧容器
-docker-compose down
-
-# 启动新容器
-docker-compose up -d
-```
-
-### 备份和恢复
-
-```bash
-# 备份容器
-docker commit meshkit-signaling meshkit-signaling-backup
-docker commit meshkit-web meshkit-web-backup
-
-# 导出镜像
-docker save meshkit-signaling > meshkit-signaling.tar
-docker save meshkit-web > meshkit-web.tar
-
-# 导入镜像
-docker load < meshkit-signaling.tar
-docker load < meshkit-web.tar
-```
-
----
-
-## 总结
-
-通过 Docker 部署 MeshKit 具有以下优势：
-
-1. **环境一致性** - 开发和测试环境完全一致
-2. **快速部署** - 一键启动所有服务
-3. **易于维护** - 统一的容器管理
-4. **可移植性** - 可在任何支持 Docker 的平台运行
-5. **隔离性** - 服务之间相互隔离，互不影响
-
-本项目主要面向本地和局域网使用场景，适合开发、测试和小范围协作使用。
+- [README](../README.md)
+- [用户指南](./USER_GUIDE.md)
+- [版本发布说明](./VERSION_RELEASE.md)

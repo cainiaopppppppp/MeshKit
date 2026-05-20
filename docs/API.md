@@ -1,367 +1,255 @@
-# API 文档
+# API 参考
 
-`@meshkit/core` 包的 API 参考文档。
+本文档记录 `@meshkit/core` 当前对 Web 和 Desktop 暴露的主要入口。core 包偏底层，日常功能开发一般先从 Web 页面或 Desktop renderer 调用这些入口和 manager 单例。
 
-## 初始化
-
-### initCore()
-
-初始化核心模块。
-
-```typescript
-async function initCore(
- deviceId?: string,
- deviceName?: string
-): Promise<{ deviceId: string; deviceName: string }>
-```
-
-**参数：**
-- `deviceId` (可选): 设备ID，不提供则自动生成
-- `deviceName` (可选): 设备名称，不提供则自动生成
-
-**返回：**
-- `deviceId`: 设备ID
-- `deviceName`: 设备名称
-
-**示例：**
-```typescript
-const { deviceId, deviceName } = await initCore();
-console.log(`设备: ${deviceName} (${deviceId})`);
-```
-
-### connectSignaling()
-
-连接信令服务器。
-
-```typescript
-function connectSignaling(url: string): void
-```
-
-**参数：**
-- `url`: 信令服务器 WebSocket URL
-
-**示例：**
-```typescript
-connectSignaling('ws://localhost:7000/ws');
-```
-
-## 文件传输
-
-### fileTransferManager
-
-文件传输管理器实例。
-
-#### selectFile()
-
-选择要发送的文件。
-
-```typescript
-selectFile(file: File): void
-```
-
-#### sendFile()
-
-发送文件到目标设备。
-
-```typescript
-async sendFile(targetDeviceId: string): Promise<void>
-```
-
-#### downloadFile()
-
-下载接收到的文件。
-
-```typescript
-downloadFile(): void
-```
-
-#### getDownloadInfo()
-
-获取下载文件信息。
-
-```typescript
-getDownloadInfo(): { blob: Blob; filename: string } | null
-```
-
-**示例：**
-```typescript
-// 发送文件
-const file = document.getElementById('fileInput').files[0];
-fileTransferManager.selectFile(file);
-await fileTransferManager.sendFile(targetDeviceId);
-
-// 下载文件
-const info = fileTransferManager.getDownloadInfo();
-if (info) {
- fileTransferManager.downloadFile();
-}
-```
-
-## 设备管理
-
-### deviceManager
-
-设备管理器实例。
-
-#### getDevices()
-
-获取所有在线设备。
-
-```typescript
-getDevices(): Device[]
-```
-
-#### selectDevice()
-
-选择目标设备。
-
-```typescript
-selectDevice(deviceId: string): void
-```
-
-#### getMyDevice()
-
-获取本设备信息。
-
-```typescript
-getMyDevice(): Device | null
-```
-
-**类型定义：**
-```typescript
-interface Device {
- id: string;
- name: string;
- isOnline: boolean;
- lastSeen: number;
-}
-```
-
-**示例：**
-```typescript
-const devices = deviceManager.getDevices();
-const myDevice = deviceManager.getMyDevice();
-```
-
-## 事件总线
-
-### eventBus
-
-全局事件总线。
-
-#### on()
-
-监听事件。
-
-```typescript
-on(event: string, handler: Function): void
-```
-
-#### off()
-
-取消监听。
-
-```typescript
-off(event: string, handler: Function): void
-```
-
-### 可用事件
-
-#### 连接事件
-
-```typescript
-// 信令服务器连接
-eventBus.on('signaling:connected', () => void);
-eventBus.on('signaling:disconnected', () => void);
-```
-
-#### 设备事件
-
-```typescript
-// 设备列表更新
-eventBus.on('device:list-updated', ({ devices }: { devices: Device[] }) => void);
-```
-
-#### 传输事件
-
-```typescript
-// 传输准备中
-eventBus.on('transfer:preparing', ({ direction }: { direction: 'send' | 'receive' }) => void);
-
-// 传输开始
-eventBus.on('transfer:started', ({ direction }: { direction: 'send' | 'receive' }) => void);
-
-// 传输进度
-eventBus.on('transfer:progress', (progress: TransferProgress) => void);
-
-// 传输完成
-eventBus.on('transfer:completed', ({ direction }: { direction: 'send' | 'receive' }) => void);
-
-// 传输错误
-eventBus.on('transfer:error', (error: Error) => void);
-```
-
-**TransferProgress 类型：**
-```typescript
-interface TransferProgress {
- progress: number; // 百分比 (0-100)
- loaded: number; // 已传输字节数
- total: number; // 总字节数
- speedMB: number; // 速度 (MB/s)
- remainingSeconds: number; // 剩余秒数
-}
-```
-
-## 配置
-
-### config
-
-全局配置对象。
-
-#### get()
-
-获取配置项。
-
-```typescript
-get<K extends keyof P2PConfig>(key: K): P2PConfig[K]
-```
-
-#### set()
-
-设置配置项。
-
-```typescript
-set<K extends keyof P2PConfig>(key: K, value: P2PConfig[K]): void
-```
-
-**配置项：**
-```typescript
-interface P2PConfig {
- peerjs: {
- host: string;
- port: number;
- path: string;
- debug: number;
- };
- signalingServer?: {
- host: string;
- wsPort: number;
- peerPort: number;
- };
- transfer: {
- chunkSize: number; // 默认 1MB
- sendDelay: number; // 默认 1ms
- timeout: number; // 默认 300秒
- };
-}
-```
-
-**示例：**
-```typescript
-// 获取配置
-const chunkSize = config.get('transfer').chunkSize;
-
-// 设置配置
-config.set('signalingServer', {
- host: '192.168.1.100',
- wsPort: 7000,
- peerPort: 8000
-});
-```
-
-## 类型定义
-
-```typescript
-// 设备信息
-interface Device {
- id: string;
- name: string;
- isOnline: boolean;
- lastSeen: number;
-}
-
-// 传输进度
-interface TransferProgress {
- progress: number;
- loaded: number;
- total: number;
- speedMB: number;
- remainingSeconds: number;
-}
-
-// P2P 配置
-interface P2PConfig {
- peerjs: {
- host: string;
- port: number;
- path: string;
- debug: number;
- };
- signalingServer?: {
- host: string;
- wsPort: number;
- peerPort: number;
- };
- transfer: {
- chunkSize: number;
- sendDelay: number;
- timeout: number;
- };
-}
-
-// 文件队列项
-interface FileQueueItem {
- file: File;
- status: 'pending' | 'transferring' | 'completed' | 'failed';
- progress: number;
- error?: string;
-}
-```
-
-## 完整示例
-
-### 文件传输
+## 导入
 
 ```typescript
 import {
- initCore,
- connectSignaling,
- fileTransferManager,
- deviceManager,
- eventBus
+  initCore,
+  connectSignaling,
+  refreshP2PPeer,
+  updateDeviceName,
+  cleanup,
+  eventBus,
+  p2pManager,
+  deviceManager,
+  fileTransferManager,
+  roomManager,
+  signalingClient,
 } from '@meshkit/core';
+```
 
-// 初始化
-const { deviceId } = await initCore();
+## 生命周期
+
+### initCore
+
+初始化设备、P2P manager、设备管理和房间管理。
+
+```typescript
+async function initCore(
+  deviceId?: string,
+  deviceName?: string
+): Promise<{ deviceId: string; deviceName: string }>;
+```
+
+如果传入的 `deviceId` 已被占用，core 会自动生成新的设备 ID 并重新初始化 Peer。
+
+### connectSignaling
+
+连接 signaling 服务。
+
+```typescript
+function connectSignaling(url: string): void;
+```
+
+调用前必须先执行 `initCore()`。
+
+```typescript
+const device = await initCore();
 connectSignaling('ws://localhost:7000/ws');
+```
 
-// 监听设备
-eventBus.on('device:list-updated', ({ devices }) => {
- console.log('在线设备:', devices);
+### refreshP2PPeer
+
+刷新 PeerJS 实例，适合 RTC 状态异常时重新建连。
+
+```typescript
+async function refreshP2PPeer(): Promise<void>;
+```
+
+### updateDeviceName
+
+更新当前设备名，并同步到 signaling。
+
+```typescript
+function updateDeviceName(newName: string): string;
+```
+
+### cleanup
+
+清理文件传输、P2P 连接、signaling 连接和设备选择状态。
+
+```typescript
+function cleanup(): void;
+```
+
+## Manager 单例
+
+### p2pManager
+
+负责 PeerJS 和 WebRTC DataConnection。
+
+常见职责：
+
+- 初始化 Peer。
+- 连接目标设备。
+- 监听连接打开、关闭、错误和数据消息。
+- 销毁或刷新 Peer。
+
+### deviceManager
+
+负责当前设备和在线设备列表。
+
+常见职责：
+
+- 生成设备 ID 和设备名。
+- 保存当前设备信息。
+- 更新在线设备列表。
+- 选择或清空目标设备。
+
+### fileTransferManager
+
+负责文件传输生命周期。
+
+常见职责：
+
+- 单文件和多文件队列传输。
+- 接收文件列表请求。
+- 接收方选择文件。
+- 发送方取消传输。
+- 接收方标记完成。
+- 进度、速度、完成、失败等事件派发。
+
+### roomManager
+
+负责取件码房间和成员状态。
+
+常见职责：
+
+- 创建房间。
+- 加入房间。
+- 离开房间。
+- 更新房间文件列表。
+- 更新成员传输状态。
+- 处理房间销毁。
+
+### signalingClient
+
+负责 WebSocket 连接。
+
+常见职责：
+
+- 注册设备。
+- 发送和接收 signaling 消息。
+- 心跳和重连。
+- 房间消息转发。
+
+## 事件
+
+core 使用 `eventBus` 广播运行时事件。事件类型定义在 `packages/core/src/types/index.ts` 的 `EventMap` 中。
+
+示例：
+
+```typescript
+eventBus.on('signaling:device-list', ({ devices }) => {
+  console.log(devices);
 });
 
-// 监听进度
 eventBus.on('transfer:progress', (progress) => {
- console.log(`进度: ${progress.progress}%`);
- console.log(`速度: ${progress.speedMB} MB/s`);
-});
-
-// 发送文件
-const file = document.getElementById('fileInput').files[0];
-fileTransferManager.selectFile(file);
-await fileTransferManager.sendFile(targetDeviceId);
-
-// 接收文件
-eventBus.on('transfer:completed', ({ direction }) => {
- if (direction === 'receive') {
- fileTransferManager.downloadFile();
- }
+  console.log(progress.progress);
 });
 ```
 
----
+常用事件：
 
-更多信息：
-- [功能详解](./FEATURES.md)
-- [开发指南](./DEVELOPMENT.md)
-- [GitHub Issues](https://github.com/cainiaopppppppp/MeshKit/issues)
+| 事件 | 说明 |
+| --- | --- |
+| `signaling:connected` | signaling 已连接 |
+| `signaling:device-list` | 在线设备列表更新 |
+| `p2p:connection:open` | P2P 连接打开 |
+| `p2p:connection:error` | P2P 连接错误 |
+| `transfer:file-list-received` | 收到多文件列表 |
+| `transfer:progress` | 文件传输进度更新 |
+| `transfer:completed` | 传输完成 |
+| `transfer:cancelled` | 传输取消 |
+| `transfer:receiver-completed` | 接收方标记完成 |
+| `room:created` | 房间创建成功 |
+| `room:joined` | 加入房间成功 |
+| `room:dissolved` | 房间被销毁 |
+
+## 主要类型
+
+### Device
+
+```typescript
+interface Device {
+  id: string;
+  name: string;
+  timestamp: number;
+  lastSeen?: number;
+}
+```
+
+### FileMetadata
+
+```typescript
+interface FileMetadata {
+  name: string;
+  size: number;
+  type: string;
+  totalChunks?: number;
+  index?: number;
+  passwordProtected?: boolean;
+  encrypted?: boolean;
+  encryptionMethod?: string;
+}
+```
+
+### Room
+
+```typescript
+interface Room {
+  id: string;
+  name: string;
+  hostId: string;
+  members: RoomMember[];
+  createdAt: number;
+  fileInfo?: FileMetadata;
+  fileList?: FileMetadata[];
+  isMultiFile?: boolean;
+  status: 'waiting' | 'transferring' | 'completed' | 'dissolved';
+  hasPassword?: boolean;
+}
+```
+
+### TransferProgress
+
+```typescript
+interface TransferProgress {
+  direction: 'send' | 'receive';
+  progress: number;
+  transferred: number;
+  total: number;
+  speed: number;
+  remaining: number;
+  speedMB: string;
+  remainingTime: string;
+}
+```
+
+## 使用顺序
+
+一个典型 Web 页面启动流程：
+
+```typescript
+const { deviceId, deviceName } = await initCore();
+connectSignaling('ws://localhost:7000/ws');
+
+eventBus.on('signaling:device-list', ({ devices }) => {
+  // 更新 UI 中的在线设备列表
+});
+```
+
+页面卸载或应用退出时：
+
+```typescript
+cleanup();
+```
+
+## 注意
+
+- manager 单例中有较多运行时状态，测试时要注意清理。
+- signaling URL、PeerJS host 和端口需要与部署环境一致。
+- 文件内容不通过 signaling 保存，接收方必须在传输完成后主动保存。
+- 邀请链接中的连接参数应视为敏感信息。
