@@ -1,5 +1,7 @@
 # MeshKit - 安全的 P2P 协作工具套件
 
+**语言 / Language**: 简体中文 | [English](./README.en.md)
+
 <div align="center">
 
 **基于 WebRTC 的去中心化 P2P 协作平台**
@@ -92,6 +94,17 @@ docker compose up -d --build
 - [Docker 部署](./docs/DOCKER_DEPLOYMENT.md)
 - [版本发布](./docs/VERSION_RELEASE.md)
 - [API 参考](./docs/API.md)
+
+English documentation:
+
+- [README](./README.en.md)
+- [Quick Start](./docs/en/QUICK_START.md)
+- [Feature Overview](./docs/en/FEATURE_OVERVIEW.md)
+- [Architecture](./docs/en/ARCHITECTURE.md)
+- [Development Guide](./docs/en/DEVELOPMENT.md)
+- [Docker Deployment](./docs/en/DOCKER_DEPLOYMENT.md)
+- [Version Release](./docs/en/VERSION_RELEASE.md)
+- [API Reference](./docs/en/API.md)
 
 ## 注意事项
 

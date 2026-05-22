@@ -1,5 +1,7 @@
 # 版本发布说明
 
+[English](./en/VERSION_RELEASE.md) | 简体中文
+
 本文档记录 MeshKit 当前版本变化，以及后续发布时建议执行的检查清单。
 
 ## 当前版本

@@ -1,5 +1,7 @@
 # Docker 部署指南
 
+[English](./en/DOCKER_DEPLOYMENT.md) | 简体中文
+
 本文档适用于 MeshKit 1.1.0 的 Docker 部署。当前 Docker 化的服务包括：
 
 - `web`: Web 前端静态站点，通过 Nginx 提供访问。

@@ -1,5 +1,7 @@
 # MeshKit 功能详解
 
+[English](./en/FEATURES.md) | 简体中文
+
 本文档说明 MeshKit 1.1.0 当前可用的主要能力。想快速上手请先看 [使用说明](./使用说明.md)，想了解实现方式请看 [架构说明](./ARCHITECTURE.md)。
 
 ## 功能地图
