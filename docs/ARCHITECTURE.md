@@ -1,5 +1,7 @@
 # MeshKit 架构说明
 
+[English](./en/ARCHITECTURE.md) | 简体中文
+
 MeshKit 是一个基于 WebRTC 的开源 P2P 工具项目，当前版本为 1.1.0。仓库采用 pnpm workspace 管理，Web、Desktop 和 signaling 服务共享一部分核心逻辑。
 
 ## 总览

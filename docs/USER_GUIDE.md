@@ -1,5 +1,7 @@
 # MeshKit 用户指南
 
+[English](./en/USER_GUIDE.md) | 简体中文
+
 本文档面向日常使用者，按任务说明 MeshKit 1.1.0 的基本操作。更短的入口页请看 [README](../README.md)。
 
 ## 启动方式

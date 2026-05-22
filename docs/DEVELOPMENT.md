@@ -1,5 +1,7 @@
 # 开发指南
 
+[English](./en/DEVELOPMENT.md) | 简体中文
+
 本文档面向参与 MeshKit 开源项目开发和打包的人。功能使用说明请看 [用户指南](./USER_GUIDE.md)，代码结构请看 [架构说明](./ARCHITECTURE.md)。
 
 ## 环境要求

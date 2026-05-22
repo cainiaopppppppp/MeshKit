@@ -1,5 +1,7 @@
 # MeshKit - 安全的 P2P 协作工具套件
 
+**语言 / Language**: 简体中文 | [English](./README.en.md)
+
 <div align="center">
 
 **基于 WebRTC 的去中心化 P2P 协作平台**
@@ -93,11 +95,23 @@ docker compose up -d --build
 - [版本发布](./docs/VERSION_RELEASE.md)
 - [API 参考](./docs/API.md)
 
+English documentation:
+
+- [README](./README.en.md)
+- [Quick Start](./docs/en/QUICK_START.md)
+- [Feature Overview](./docs/en/FEATURE_OVERVIEW.md)
+- [Architecture](./docs/en/ARCHITECTURE.md)
+- [Development Guide](./docs/en/DEVELOPMENT.md)
+- [Docker Deployment](./docs/en/DOCKER_DEPLOYMENT.md)
+- [Version Release](./docs/en/VERSION_RELEASE.md)
+- [API Reference](./docs/en/API.md)
+
 ## 注意事项
 
 - 活跃文件传输期间，发送方和接收方都应留在当前页面。
 - 邀请链接可能包含连接参数、取件码或房间信息，只建议发给可信的人。
 - Desktop 共享中心支持 Windows 和 macOS，会在本机启动局域网服务，请确认防火墙允许对应端口访问。
+- 支持手机、平板、电脑三端互通。
 
 ## 许可证
 

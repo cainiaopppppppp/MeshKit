@@ -1,5 +1,7 @@
 # API 参考
 
+[English](./en/API.md) | 简体中文
+
 本文档记录 `@meshkit/core` 当前对 Web 和 Desktop 暴露的主要入口。core 包偏底层，日常功能开发一般先从 Web 页面或 Desktop renderer 调用这些入口和 manager 单例。
 
 ## 导入
