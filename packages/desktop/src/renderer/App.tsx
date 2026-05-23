@@ -8,6 +8,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { StickyNotesPage } from './pages/StickyNotesPage';
 import { AppChromeProvider, useAppChrome } from '@meshkit/web/contexts/AppChromeContext';
 import { usePickupHostNavigationGuard } from '@meshkit/web/hooks/usePickupHostNavigationGuard';
+import { I18nProvider, LanguageToggleButton } from '@meshkit/web/i18n';
 import { getDesktopShareableWebUrl, loadSignalingConfigDraft } from '@meshkit/web/utils/signalingConfig';
 import meshkitIconUrl from './assets/meshkit-icon.png';
 
@@ -305,6 +306,8 @@ function Navigation() {
               </span>
             </button>
 
+            <LanguageToggleButton className="flex h-[34px] min-w-[42px] items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 text-slate-500 transition hover:border-[#1a6dff] hover:text-slate-900" />
+
             <Link
               to="/help"
               title={'帮助'}
@@ -338,22 +341,24 @@ function Navigation() {
 
 function App() {
   return (
-    <AppChromeProvider>
-      <HashRouter>
-        <div className="flex min-h-screen flex-col bg-[#f5f7fb]">
-          <Navigation />
-          <div className="flex-1 min-h-0">
-            <Routes>
-              <Route path="/" element={<FileTransferPage />} />
-              <Route path="/sticky-notes" element={<StickyNotesPage />} />
-              <Route path="/encrypted-chat" element={<EncryptedChatPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="/help" element={<HelpPage />} />
-            </Routes>
+    <I18nProvider>
+      <AppChromeProvider>
+        <HashRouter>
+          <div className="flex min-h-screen flex-col bg-[#f5f7fb]">
+            <Navigation />
+            <div className="flex-1 min-h-0">
+              <Routes>
+                <Route path="/" element={<FileTransferPage />} />
+                <Route path="/sticky-notes" element={<StickyNotesPage />} />
+                <Route path="/encrypted-chat" element={<EncryptedChatPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/help" element={<HelpPage />} />
+              </Routes>
+            </div>
           </div>
-        </div>
-      </HashRouter>
-    </AppChromeProvider>
+        </HashRouter>
+      </AppChromeProvider>
+    </I18nProvider>
   );
 }
 
